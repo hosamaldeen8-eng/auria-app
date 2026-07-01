@@ -79,6 +79,7 @@ ss.setdefault("pwd", None)
 ss.setdefault("info", None)
 ss.setdefault("lang", "ar")
 ss.setdefault("screen", "home")
+ss.setdefault("mo_open", None)
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -223,6 +224,104 @@ def tasks_screen():
                             oc.post_task_note(uid, pwd, task["id"], note); st.success("✓"); st.rerun()
 
 # ── PRODUCTION ───────────────────────────────────────────────
+# ── MO MANAGEMENT PAGE ───────────────────────────────────────
+def mo_detail_screen():
+    uid, pwd = ss.uid, ss.pwd
+    mo_id = ss.mo_open
+
+    if st.button("← أوامر الإنتاج"):
+        ss.mo_open = None
+        st.rerun()
+
+    mo = oc.get_mo_detail(uid, pwd, mo_id)
+    if not mo:
+        st.error("لم يتم العثور على الأمر")
+        return
+
+    # Auto-refresh every 15s while a timer is running (keeps clock live)
+    if mo["any_running"]:
+        try:
+            from streamlit_autorefresh import st_autorefresh
+            st_autorefresh(interval=15000, key="mo_tick")
+        except Exception:
+            pass  # graceful if package missing
+
+    # ── Header card with LIVE total production time ──
+    hrs = int(mo["total_elapsed_min"] // 60)
+    mins = int(mo["total_elapsed_min"] % 60)
+    state_ar = {"progress":"🟡 جاري","confirmed":"🟢 مؤكد","done":"⚪ منتهي","draft":"◻️ مسودة","to_close":"🔵 للإغلاق"}.get(mo["state"], mo["state"])
+    running_badge = "<span style='color:#7FB069'>● يعمل الآن</span>" if mo["any_running"] else ""
+    st.markdown(f"""<div class='greeting'>
+        <div style='display:flex;justify-content:space-between;align-items:start'>
+          <div>
+            <div style='font-family:monospace;font-size:12px;opacity:.6'>{mo['name']}</div>
+            <div style='font-size:18px;font-weight:700'>{mo['product']}</div>
+            <div style='font-size:12px;opacity:.7;margin-top:2px'>{mo['qty']:g} وحدة · {state_ar} {running_badge}</div>
+          </div>
+          <div style='text-align:center;background:rgba(255,255,255,.08);border-radius:10px;padding:8px 14px'>
+            <div style='font-size:22px;font-weight:700;color:#7FB069'>{hrs}:{mins:02d}</div>
+            <div style='font-size:9px;opacity:.6'>ساعة إنتاج ⏱</div>
+          </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── MO actions ──
+    c1, c2 = st.columns(2)
+    with c1:
+        if mo["state"] == "draft" and st.button("🟢 تأكيد الأمر", use_container_width=True):
+            ok, msg = oc.mo_confirm(uid, pwd, mo_id)
+            st.success(msg) if ok else st.error(msg)
+            if ok: st.rerun()
+    with c2:
+        if mo["state"] in ("confirmed", "progress", "to_close") and st.button("✅ إنهاء الأمر بالكامل", use_container_width=True):
+            ok, msg = oc.mo_validate(uid, pwd, mo_id)
+            st.success(msg) if ok else st.error(msg)
+            if ok: st.rerun()
+
+    # ── Work orders with individual timers ──
+    st.markdown("**مراحل العمل**")
+    for w in mo["workorders"]:
+        pct = min(100, round(w["elapsed"] / w["expected"] * 100)) if w["expected"] else 0
+        e_h, e_m = int(w["elapsed"] // 60), int(w["elapsed"] % 60)
+        dot = "🟢" if w["working"] else "⚪"
+        state_ar = {"progress":"جاري","ready":"جاهز","waiting":"بانتظار","pending":"معلق","done":"✓ منتهي","cancel":"ملغي"}.get(w["state"], w["state"])
+        st.markdown(f"""<div class='task-row'>
+            <div style='display:flex;justify-content:space-between'>
+              <b>{w['name']}</b>
+              <span style='font-size:11px'>{dot} {state_ar}</span>
+            </div>
+            <div style='margin-top:6px;background:rgba(255,255,255,.12);border-radius:6px;height:6px;overflow:hidden'>
+              <div style='width:{pct}%;height:100%;background:{"#E07070" if pct>100 else "#7FB069"}'></div>
+            </div>
+            <div style='display:flex;justify-content:space-between;font-size:11px;opacity:.7;margin-top:3px'>
+              <span>⏱ {e_h}:{e_m:02d} {"(يعمل الآن)" if w['working'] else ""}</span>
+              <span>متوقع: {w['expected']:g} دقيقة</span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+        if w["state"] not in ("done", "cancel"):
+            b1, b2, b3 = st.columns(3)
+            with b1:
+                if not w["working"] and st.button("▶️ ابدأ", key=f"mstart_{w['id']}", use_container_width=True):
+                    ok, msg = oc.wo_start(uid, pwd, w["id"])
+                    if ok: st.rerun()
+                    else: st.error(msg)
+                if w["working"] and st.button("⏸️ أوقف", key=f"mstop_{w['id']}", use_container_width=True):
+                    ok, msg = oc.wo_stop(uid, pwd, w["id"])
+                    if ok: st.rerun()
+                    else: st.error(msg)
+            with b2:
+                if st.button("✅ أنهِ المرحلة", key=f"mfin_{w['id']}", use_container_width=True):
+                    ok, msg = oc.wo_finish(uid, pwd, w["id"])
+                    if ok: st.rerun()
+                    else: st.error(msg)
+
+    # ── Components ──
+    st.markdown("**المكوّنات**")
+    for c in mo["components"]:
+        state_icon = {"assigned":"🟢","done":"✓","partially_available":"🟡","confirmed":"🟡","waiting":"⚪","draft":"◻️"}.get(c["state"], "⚪")
+        st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:8px 14px'><span>{state_icon} {c['name']}</span><span style='opacity:.8'>{c['done']:g} / {c['needed']:g} {c['uom']}</span></div>", unsafe_allow_html=True)
+
+
 def production_screen():
     uid, pwd = ss.uid, ss.pwd
     # Guard against stale module cache after a deploy
@@ -258,8 +357,11 @@ def production_screen():
 
         st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
         for mo in oc.get_mos(uid, pwd):
-            state_colors = {"progress":"#D4A853","confirmed":"#3B6D11","done":"#888","draft":"#aaa"}
-            st.markdown(f"<div class='task-row'><span style='font-family:monospace;color:#D4A853'>{mo['name']}</span> <span class='badge' style='background:rgba(255,255,255,.1);color:{state_colors.get(mo['state'],'#888')}'>{mo['state']}</span><br><b>{mo['product']}</b><br><span style='color:#888;font-size:12px'>{mo['qty']:g} · {mo['date']}</span></div>", unsafe_allow_html=True)
+            state_ar = {"progress":"🟡 جاري","confirmed":"🟢 مؤكد","done":"⚪ منتهي","draft":"◻️ مسودة","to_close":"🔵 للإغلاق"}.get(mo["state"], mo["state"])
+            if st.button(f"{mo['name']}  ·  {mo['product'][:32]}  ·  {mo['qty']:g}  ·  {state_ar}",
+                         key=f"mo_{mo['id']}", use_container_width=True):
+                ss.mo_open = mo["id"]
+                st.rerun()
 
     # ── Tab 2: Work order timers (start/stop) ──
     with tab2:
@@ -446,7 +548,8 @@ else:
     header()
     screen = ss.screen
     if screen == "home":         home_screen()
-    elif screen == "production": production_screen()
+    elif screen == "production":
+        mo_detail_screen() if ss.mo_open else production_screen()
     elif screen == "procurement":procurement_screen()
     elif screen == "operations": operations_screen()
     elif screen == "creative":   creative_screen()

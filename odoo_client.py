@@ -348,6 +348,107 @@ def create_mo_from_bom(uid, pwd, tmpl_id, qty):
     return mo_id
 
 
+# ── MO MANAGEMENT PAGE ───────────────────────────────────────
+def _utcnow():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _elapsed_min(date_start_str):
+    """Minutes since an Odoo UTC datetime string."""
+    from datetime import datetime
+    try:
+        start = datetime.strptime(date_start_str, "%Y-%m-%d %H:%M:%S")
+        return max(0.0, (_utcnow() - start).total_seconds() / 60.0)
+    except Exception:
+        return 0.0
+
+
+def get_mo_detail(uid, pwd, mo_id):
+    """Everything for the MO management page: header, components,
+    work orders with LIVE elapsed time (running logs included)."""
+    mo = odoo(uid, pwd, "mrp.production", "read", [[mo_id]],
+        {"fields": ["name", "product_id", "product_qty", "qty_producing",
+                    "state", "date_start", "bom_id", "workorder_ids"]})
+    if not mo:
+        return None
+    mo = mo[0]
+
+    # Components (raw moves) with reservation state
+    moves = odoo(uid, pwd, "stock.move", "search_read",
+        [[["raw_material_production_id", "=", mo_id]]],
+        {"fields": ["product_id", "product_uom_qty", "quantity", "state", "product_uom"]})
+    components = [{
+        "name": m["product_id"][1] if m["product_id"] else "—",
+        "needed": m["product_uom_qty"],
+        "done": m.get("quantity", 0),
+        "state": m["state"],
+        "uom": m["product_uom"][1] if m.get("product_uom") else "",
+    } for m in moves]
+
+    # Work orders with live elapsed
+    workorders = []
+    total_elapsed = 0.0
+    if mo["workorder_ids"]:
+        wos = odoo(uid, pwd, "mrp.workorder", "read", [mo["workorder_ids"]],
+            {"fields": ["id", "name", "state", "is_user_working", "duration",
+                        "duration_expected", "workcenter_id"]})
+        for w in wos:
+            elapsed = w["duration"]  # accumulated (closed logs)
+            running_since = None
+            if w["is_user_working"]:
+                # Open time log → add live elapsed
+                open_log = odoo(uid, pwd, "mrp.workcenter.productivity", "search_read",
+                    [[["workorder_id", "=", w["id"]], ["date_end", "=", False]]],
+                    {"fields": ["date_start"], "limit": 1, "order": "id desc"})
+                if open_log:
+                    running_since = open_log[0]["date_start"]
+                    elapsed += _elapsed_min(running_since)
+            total_elapsed += elapsed
+            workorders.append({
+                "id": w["id"], "name": w["name"],
+                "state": w["state"], "working": w["is_user_working"],
+                "elapsed": round(elapsed, 1),
+                "expected": round(w["duration_expected"], 1),
+                "workcenter": w["workcenter_id"][1] if w.get("workcenter_id") else "",
+                "running_since": running_since,
+            })
+
+    return {
+        "id": mo_id, "name": mo["name"],
+        "product": mo["product_id"][1] if mo["product_id"] else "—",
+        "qty": mo["product_qty"], "producing": mo.get("qty_producing", 0),
+        "state": mo["state"],
+        "date_start": (mo.get("date_start") or "")[:16],
+        "components": components,
+        "workorders": workorders,
+        "total_elapsed_min": round(total_elapsed, 1),
+        "any_running": any(w["working"] for w in workorders),
+    }
+
+
+def mo_validate(uid, pwd, mo_id):
+    """Mark the whole MO done. Returns (ok, message)."""
+    try:
+        odoo(uid, pwd, "mrp.production", "button_mark_done", [[mo_id]])
+        return True, "تم إنهاء أمر التصنيع"
+    except Exception as e:
+        if "cannot marshal None" in str(e):
+            return True, "تم إنهاء أمر التصنيع"
+        return False, _clean_odoo_error(e)
+
+
+def mo_confirm(uid, pwd, mo_id):
+    """Confirm a draft MO. Returns (ok, message)."""
+    try:
+        odoo(uid, pwd, "mrp.production", "action_confirm", [[mo_id]])
+        return True, "تم التأكيد"
+    except Exception as e:
+        if "cannot marshal None" in str(e):
+            return True, "تم التأكيد"
+        return False, _clean_odoo_error(e)
+
+
 # ── WORK ORDER TIME TRACKING (start/stop) ────────────────────
 def get_workorders(uid, pwd, product_filter=None):
     """Work orders with live time tracking. Optionally filter by product."""
