@@ -4,14 +4,32 @@ Wraps XML-RPC calls. Each user authenticates with their own Odoo account,
 so every action respects Odoo's permissions and audit log.
 """
 import xmlrpc.client
+import threading
 from datetime import date
 from collections import defaultdict
 
 ODOO_URL = "https://odoo.auria.global"
 ODOO_DB  = "Auria_Business"
 
-_common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
-_models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+# Streamlit serves each user session on its own thread. xmlrpc.client's
+# ServerProxy is NOT thread-safe — sharing one across threads corrupts the
+# HTTP connection state (http.client.CannotSendRequest). So each thread
+# gets its own proxies via threading.local.
+_tl = threading.local()
+
+def _get_common():
+    if not hasattr(_tl, "common"):
+        _tl.common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+    return _tl.common
+
+def _get_models():
+    if not hasattr(_tl, "models"):
+        _tl.models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+    return _tl.models
+
+def _reset_models():
+    if hasattr(_tl, "models"):
+        del _tl.models
 
 # ── Department mapping (uid → info) ──────────────────────────
 USER_DEPT = {
@@ -49,7 +67,13 @@ def is_done(stage_name):
 
 def authenticate(email, password):
     """Returns (uid, info) or (None, None)."""
-    uid = _common.authenticate(ODOO_DB, email.strip(), password, {})
+    try:
+        uid = _get_common().authenticate(ODOO_DB, email.strip(), password, {})
+    except (xmlrpc.client.ProtocolError, ConnectionError, OSError):
+        # Stale connection — rebuild and retry once
+        if hasattr(_tl, "common"):
+            del _tl.common
+        uid = _get_common().authenticate(ODOO_DB, email.strip(), password, {})
     if not uid:
         return None, None
     info = USER_DEPT.get(uid, {"dept": "management", "name": email, "color": "#2E3D2E"})
@@ -57,7 +81,18 @@ def authenticate(email, password):
 
 
 def odoo(uid, pwd, model, method, args=None, kwargs=None):
-    return _models.execute_kw(ODOO_DB, uid, pwd, model, method, args or [[]], kwargs or {})
+    """Thread-safe Odoo call with one retry on connection-state errors."""
+    import http.client
+    try:
+        return _get_models().execute_kw(ODOO_DB, uid, pwd, model, method,
+                                        args or [[]], kwargs or {})
+    except (http.client.CannotSendRequest, http.client.ResponseNotReady,
+            xmlrpc.client.ProtocolError, ConnectionError, BrokenPipeError, OSError):
+        # Connection state corrupted (e.g. after an interrupted request) —
+        # rebuild this thread's proxy and retry once.
+        _reset_models()
+        return _get_models().execute_kw(ODOO_DB, uid, pwd, model, method,
+                                        args or [[]], kwargs or {})
 
 
 def today_str():
