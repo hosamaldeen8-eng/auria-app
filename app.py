@@ -7,8 +7,10 @@
 ╚══════════════════════════════════════════════════════════╝
 """
 import streamlit as st
+import extra_streamlit_components as stx
 import odoo_client as oc
 from pathlib import Path
+from datetime import datetime, timedelta
 import base64
 
 st.set_page_config(page_title="Auria", page_icon="🌿", layout="centered", initial_sidebar_state="collapsed")
@@ -23,6 +25,7 @@ def img_b64(name):
 
 LOGO_B64   = img_b64("auria-logo.png")
 EMBLEM_B64 = img_b64("auria-emblem.png")
+EMBLEM_SM  = img_b64("emblem-small.png")
 
 # ── TRANSLATIONS ─────────────────────────────────────────────
 T = {
@@ -69,20 +72,59 @@ st.markdown("""
   .task-row { background:#1E281E; border:1px solid #2E3D2E; border-radius:10px; padding:12px 14px; margin-bottom:8px; color:#E8E4D6; }
   .task-row a { color:#7FB069; }
   .badge { font-size:10px; padding:2px 8px; border-radius:20px; }
+  [data-testid="stStatusWidget"] { visibility: hidden; }
+  .auria-loader{position:fixed;inset:0;background:rgba(20,27,20,.78);display:none;align-items:center;justify-content:center;z-index:99999}
+  body:has([data-testid="stStatusWidget"]) .auria-loader{display:flex}
+  .auria-loader img{width:70px;height:70px;border-radius:50%;animation:apulse 1.1s ease-in-out infinite;box-shadow:0 0 34px rgba(127,176,105,.35)}
+  @keyframes apulse{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.16);opacity:1}}
 </style>
 """, unsafe_allow_html=True)
+
+# Branded loading overlay — appears automatically whenever the app is
+# processing (page moves, button clicks) via the :has() selector above.
+st.markdown(f"<div class='auria-loader'><img src='data:image/png;base64,{EMBLEM_SM}'/></div>", unsafe_allow_html=True)
 
 # ── SESSION ──────────────────────────────────────────────────
 ss = st.session_state
 ss.setdefault("uid", None)
 ss.setdefault("pwd", None)
 ss.setdefault("info", None)
+ss.setdefault("email", None)
 ss.setdefault("lang", "ar")
 ss.setdefault("screen", "home")
 ss.setdefault("mo_open", None)
 
 def t(key):
     return T[ss.lang].get(key, key)
+
+# ── PERSISTENT LOGIN (cookies) ───────────────────────────────
+cookie_mgr = stx.CookieManager(key="auria_cookies")
+
+def save_login_cookie(email, pwd):
+    token = base64.b64encode(f"{email}|{pwd}".encode()).decode()
+    cookie_mgr.set("auria_auth", token,
+                   expires_at=datetime.now() + timedelta(days=30),
+                   key="ck_set")
+
+def clear_login_cookie():
+    try:
+        cookie_mgr.delete("auria_auth", key="ck_del")
+    except Exception:
+        pass
+
+# Auto-login: if no session but a saved cookie exists, sign in silently
+if not ss.uid and not ss.get("auto_login_tried"):
+    raw = cookie_mgr.get("auria_auth")
+    if raw:
+        ss.auto_login_tried = True
+        try:
+            email, pwd = base64.b64decode(raw.encode()).decode().split("|", 1)
+            uid, info = oc.authenticate(email, pwd)
+            if uid:
+                ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email
+                st.rerun()
+        except Exception:
+            pass
 
 # ── LOGIN ────────────────────────────────────────────────────
 def login_screen():
@@ -98,7 +140,8 @@ def login_screen():
         if st.button(t("signin"), use_container_width=True, type="primary"):
             uid, info = oc.authenticate(email, pwd)
             if uid:
-                ss.uid, ss.pwd, ss.info = uid, pwd, info
+                ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email.strip()
+                save_login_cookie(email.strip(), pwd)   # stay signed in 30 days
                 ss.screen = "home"
                 st.rerun()
             else:
@@ -128,7 +171,7 @@ def nav():
     if dept in ("production","procurement","operations","creative","cs"):
         icons = {"production":"📦","procurement":"🛒","operations":"🚚","creative":"🎨","cs":"💬"}
         tabs.append((dept, icons[dept], t(dept)))
-    tabs += [("tasks", "✅", t("tasks")), ("report", "📝", t("report"))]
+    tabs += [("tasks", "✅", t("tasks")), ("report", "📝", t("report")), ("profile", "👤", "")]
 
     cols = st.columns(len(tabs))
     for i, (key, icon, label) in enumerate(tabs):
@@ -541,6 +584,42 @@ def report_screen():
         else:
             st.error("No report task assigned to this account.")
 
+# ── PROFILE ──────────────────────────────────────────────────
+def profile_screen():
+    info = ss.info
+    dept_label = t(info["dept"])
+    st.markdown(f"""<div class='greeting' style='text-align:center;padding:26px 18px'>
+        <img src='data:image/png;base64,{EMBLEM_B64}' width='72' style='border-radius:50%;margin-bottom:10px'/>
+        <div style='font-size:22px;font-weight:700'>{info['name']}</div>
+        <div style='font-size:13px;opacity:.7;margin-top:2px'>{dept_label}</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown(f"""<div class='metric-card' style='text-align:start'>
+        <div style='display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.07)'>
+          <span style='opacity:.6;font-size:12px'>{t('email')}</span><span style='font-size:13px'>{ss.email or '—'}</span>
+        </div>
+        <div style='display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.07)'>
+          <span style='opacity:.6;font-size:12px'>Odoo ID</span><span style='font-size:13px'>#{ss.uid}</span>
+        </div>
+        <div style='display:flex;justify-content:space-between;padding:6px 0'>
+          <span style='opacity:.6;font-size:12px'>{t('dept_snapshot')}</span><span style='font-size:13px'>{dept_label}</span>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
+    lang_label = "English" if ss.lang == "ar" else "العربية"
+    if st.button(f"🌐 {lang_label}", use_container_width=True, key="prof_lang"):
+        ss.lang = "en" if ss.lang == "ar" else "ar"; st.rerun()
+
+    st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
+    if st.button(f"🚪 {t('logout')}", use_container_width=True, type="primary", key="prof_logout"):
+        clear_login_cookie()
+        for k in ["uid","pwd","info","email","cs_open","mo_open","auto_login_tried"]:
+            ss.pop(k, None)
+        ss.auto_login_tried = True  # don't instantly re-login from cookie
+        st.rerun()
+
+
 # ── ROUTER ───────────────────────────────────────────────────
 if not ss.uid:
     login_screen()
@@ -556,9 +635,6 @@ else:
     elif screen == "cs":         cs_screen()
     elif screen == "tasks":      tasks_screen()
     elif screen == "report":     report_screen()
+    elif screen == "profile":    profile_screen()
     st.markdown("<hr style='margin:16px 0 8px'>", unsafe_allow_html=True)
     nav()
-    if st.button(t("logout"), use_container_width=True):
-        for k in ["uid","pwd","info","cs_open"]:
-            ss.pop(k, None)
-        st.rerun()
