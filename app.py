@@ -428,18 +428,20 @@ def production_screen():
             worker = running_map.get(mo["id"])
             worker_box = (f"<span style='background:rgba(127,176,105,.15);color:#7FB069;"
                           f"padding:4px 10px;border-radius:8px;font-size:11px'>🟢 {worker}</span>") if worker else ""
-            st.markdown(f"""<div class='task-row' style='margin-bottom:4px'>
-                <div style='display:flex;justify-content:space-between;align-items:center'>
-                  <span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{mo['name']}</span>
-                  <span style='background:{s_bg};color:{s_col};padding:3px 11px;border-radius:20px;font-size:11px;font-weight:600'>{label}</span>
-                </div>
-                <div style='font-size:15px;font-weight:700;margin:9px 0 7px'>{mo['product']}</div>
-                <div style='display:flex;gap:6px;flex-wrap:wrap'>
-                  <span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>📦 {mo['qty']:g} وحدة</span>
-                  <span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>📅 {mo['date']}</span>
-                  {worker_box}
-                </div>
-            </div>""", unsafe_allow_html=True)
+            card = (
+                "<div class='task-row' style='margin-bottom:4px'>"
+                "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{mo['name']}</span>"
+                f"<span style='background:{s_bg};color:{s_col};padding:3px 11px;border-radius:20px;font-size:11px;font-weight:600'>{label}</span>"
+                "</div>"
+                f"<div style='font-size:15px;font-weight:700;margin:9px 0 7px'>{mo['product']}</div>"
+                "<div style='display:flex;gap:6px;flex-wrap:wrap'>"
+                f"<span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>📦 {mo['qty']:g} وحدة</span>"
+                f"<span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>📅 {mo['date']}</span>"
+                f"{worker_box}"
+                "</div></div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
             if st.button("إدارة الأمر ←", key=f"mo_{mo['id']}", use_container_width=True):
                 ss.mo_open = mo["id"]
                 st.rerun()
