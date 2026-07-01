@@ -197,16 +197,88 @@ def tasks_screen():
 # ── PRODUCTION ───────────────────────────────────────────────
 def production_screen():
     uid, pwd = ss.uid, ss.pwd
-    tab1, tab2 = st.tabs([f"⚙️ {t('mos')}", f"📦 {t('inventory')}"])
+    tab1, tab2, tab3, tab4 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}", "⏱️ Time/Product"])
+
+    # ── Tab 1: MOs + create from BOM dropdown ──
     with tab1:
+        with st.expander("➕ إنشاء أمر تصنيع جديد"):
+            prods = oc.get_manufacturable_products(uid, pwd)
+            names = [f"{p['name']} (batch {p['batch']:g})" for p in prods]
+            idx = st.selectbox("المنتج", range(len(names)), format_func=lambda i: names[i], key="mo_prod")
+            chosen = prods[idx]
+            # Show BOM as soon as product is picked
+            bom = oc.get_bom_detail(uid, pwd, chosen["bom_id"])
+            if bom:
+                st.markdown(f"**المكوّنات (batch {bom['batch']:g}):**")
+                comp_html = "<div class='task-row'>"
+                for c in bom["components"]:
+                    comp_html += f"<div style='display:flex;justify-content:space-between;padding:2px 0'><span>{c['name']}</span><span style='color:#3B6D11;font-weight:600'>{c['qty']:g} {c['uom']}</span></div>"
+                comp_html += "</div>"
+                st.markdown(comp_html, unsafe_allow_html=True)
+                if bom["operations"]:
+                    st.caption("العمليات: " + " · ".join(o["name"] for o in bom["operations"]))
+            qty = st.number_input("الكمية المطلوبة", min_value=1.0, value=float(chosen["batch"]), step=1.0, key="mo_qty")
+            if st.button("إنشاء الأمر", type="primary", key="mo_create"):
+                mo_id = oc.create_mo_from_bom(uid, pwd, chosen["tmpl_id"], qty)
+                if mo_id:
+                    st.success(f"✅ تم إنشاء أمر التصنيع #{mo_id}")
+                    st.rerun()
+
+        st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
         for mo in oc.get_mos(uid, pwd):
             state_colors = {"progress":"#D4A853","confirmed":"#3B6D11","done":"#888","draft":"#aaa"}
-            st.markdown(f"<div class='task-row'><span style='font-family:monospace;color:#D4A853'>{mo['name']}</span> <span class='badge' style='background:#eee;color:{state_colors.get(mo['state'],'#888')}'>{mo['state']}</span><br><b>{mo['product']}</b><br><span style='color:#888;font-size:12px'>{mo['qty']} · {mo['date']}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='task-row'><span style='font-family:monospace;color:#D4A853'>{mo['name']}</span> <span class='badge' style='background:#eee;color:{state_colors.get(mo['state'],'#888')}'>{mo['state']}</span><br><b>{mo['product']}</b><br><span style='color:#888;font-size:12px'>{mo['qty']:g} · {mo['date']}</span></div>", unsafe_allow_html=True)
+
+    # ── Tab 2: Work order timers (start/stop) ──
     with tab2:
+        st.caption("ابدأ وأوقف مؤقّت العمل لكل أمر شغل")
+        wos = oc.get_workorders(uid, pwd)
+        if not wos:
+            st.info("لا توجد أوامر شغل نشطة")
+        for w in wos:
+            pct = min(100, round(w["duration"] / w["expected"] * 100)) if w["expected"] else 0
+            state_ar = {"progress":"جاري","ready":"جاهز","waiting":"بانتظار مكوّنات","pending":"بانتظار","done":"منتهي"}.get(w["state"], w["state"])
+            working_dot = "🟢" if w["working"] else "⚪"
+            st.markdown(f"""<div class='task-row'>
+                <div style='display:flex;justify-content:space-between;align-items:start'>
+                  <div><b>{w['product']}</b><br><span style='font-family:monospace;color:#888;font-size:11px'>{w['mo']}</span></div>
+                  <span style='font-size:11px'>{working_dot} {state_ar}</span>
+                </div>
+                <div style='margin-top:6px;background:#eee;border-radius:6px;height:6px;overflow:hidden'>
+                  <div style='width:{pct}%;height:100%;background:{"#A32D2D" if pct>100 else "#3B6D11"}'></div>
+                </div>
+                <div style='font-size:11px;color:#888;margin-top:3px'>{w['duration']:g} / {w['expected']:g} دقيقة ({pct}%)</div>
+            </div>""", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if not w["working"] and st.button("▶️ ابدأ", key=f"start_{w['id']}", use_container_width=True):
+                    oc.wo_start(uid, pwd, w["id"]); st.rerun()
+                if w["working"] and st.button("⏸️ أوقف", key=f"stop_{w['id']}", use_container_width=True):
+                    oc.wo_stop(uid, pwd, w["id"]); st.rerun()
+            with c2:
+                if st.button("✅ أنهِ", key=f"fin_{w['id']}", use_container_width=True):
+                    oc.wo_finish(uid, pwd, w["id"]); st.success("✓"); st.rerun()
+
+    # ── Tab 3: Inventory ──
+    with tab3:
         q = st.text_input(t("search"), key="inv_search")
         for item in oc.get_inventory(uid, pwd, q):
             color = "#A32D2D" if item["qty"] == 0 else "#D4A853"
-            st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span><b>{item['name']}</b><br><span style='color:#888;font-size:11px'>{item['loc']}</span></span><span style='font-size:18px;font-weight:700;color:{color}'>{item['qty']}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span><b>{item['name']}</b><br><span style='color:#888;font-size:11px'>{item['loc']}</span></span><span style='font-size:18px;font-weight:700;color:{color}'>{item['qty']:g}</span></div>", unsafe_allow_html=True)
+
+    # ── Tab 4: Time per product ──
+    with tab4:
+        st.caption("الوقت الفعلي لكل منتج (من أوامر الشغل المنتهية)")
+        for tp in oc.get_time_by_product(uid, pwd):
+            eff_color = "#3B6D11" if tp["efficiency"] >= 100 else "#D4A853" if tp["efficiency"] >= 60 else "#A32D2D"
+            hrs = tp["actual_min"] / 60
+            st.markdown(f"""<div class='task-row'>
+                <div style='display:flex;justify-content:space-between'>
+                  <b>{tp['product']}</b>
+                  <span style='color:{eff_color};font-weight:600'>{tp['efficiency']}%</span>
+                </div>
+                <div style='font-size:11px;color:#888;margin-top:3px'>{hrs:.1f} ساعة فعلية · {tp['runs']} دورة إنتاج</div>
+            </div>""", unsafe_allow_html=True)
 
 # ── PROCUREMENT ──────────────────────────────────────────────
 def procurement_screen():

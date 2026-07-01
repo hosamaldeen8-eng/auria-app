@@ -191,6 +191,138 @@ def get_inventory(uid, pwd, query=""):
             for n, v in sorted(agg.items(), key=lambda x: -x[1]["qty"])[:60]]
 
 
+# ── BOM / PRODUCT DROPDOWN ───────────────────────────────────
+def get_manufacturable_products(uid, pwd):
+    """Products that have a normal BOM — for the 'create MO' dropdown."""
+    boms = odoo(uid, pwd, "mrp.bom", "search_read",
+        [[["type", "=", "normal"]]],
+        {"fields": ["id", "product_tmpl_id", "product_qty"], "order": "id"})
+    out = []
+    for b in boms:
+        out.append({
+            "bom_id": b["id"],
+            "tmpl_id": b["product_tmpl_id"][0],
+            "name": b["product_tmpl_id"][1],
+            "batch": b["product_qty"],
+        })
+    return out
+
+
+def get_bom_detail(uid, pwd, bom_id):
+    """Full BOM: components + quantities + the operations."""
+    bom = odoo(uid, pwd, "mrp.bom", "read", [[bom_id]],
+        {"fields": ["product_tmpl_id", "product_qty", "operation_ids"]})
+    if not bom:
+        return None
+    bom = bom[0]
+    lines = odoo(uid, pwd, "mrp.bom.line", "search_read",
+        [[["bom_id", "=", bom_id]]],
+        {"fields": ["product_id", "product_qty", "product_uom_id"]})
+    components = [{
+        "name": l["product_id"][1],
+        "qty": l["product_qty"],
+        "uom": l["product_uom_id"][1] if l["product_uom_id"] else "",
+    } for l in lines]
+    # Operations (routing steps)
+    ops = []
+    if bom.get("operation_ids"):
+        op_recs = odoo(uid, pwd, "mrp.routing.workcenter", "read", [bom["operation_ids"]],
+            {"fields": ["name", "workcenter_id", "time_cycle"]})
+        ops = [{
+            "name": o["name"],
+            "workcenter": o["workcenter_id"][1] if o.get("workcenter_id") else "",
+            "time": o.get("time_cycle", 0),
+        } for o in op_recs]
+    return {
+        "product": bom["product_tmpl_id"][1],
+        "batch": bom["product_qty"],
+        "components": components,
+        "operations": ops,
+    }
+
+
+def create_mo_from_bom(uid, pwd, tmpl_id, qty):
+    """Create a manufacturing order for a product template."""
+    variant = odoo(uid, pwd, "product.product", "search_read",
+        [[["product_tmpl_id", "=", tmpl_id]]], {"fields": ["id"], "limit": 1})
+    if not variant:
+        return None
+    mo_id = odoo(uid, pwd, "mrp.production", "create", [{
+        "product_id": variant[0]["id"],
+        "product_qty": float(qty),
+    }])
+    return mo_id
+
+
+# ── WORK ORDER TIME TRACKING (start/stop) ────────────────────
+def get_workorders(uid, pwd, product_filter=None):
+    """Work orders with live time tracking. Optionally filter by product."""
+    domain = [["state", "in", ["ready", "progress", "pending", "waiting"]]]
+    wos = odoo(uid, pwd, "mrp.workorder", "search_read", [domain],
+        {"fields": ["id", "name", "state", "is_user_working", "duration",
+                    "duration_expected", "production_id", "product_id",
+                    "qty_produced", "qty_producing", "workcenter_id", "date_start"],
+         "limit": 50, "order": "date_start desc"})
+    out = []
+    for w in wos:
+        pname = w["product_id"][1] if w.get("product_id") else "—"
+        if product_filter and product_filter.lower() not in pname.lower():
+            continue
+        out.append({
+            "id": w["id"], "name": w["name"],
+            "state": w["state"],
+            "working": w["is_user_working"],
+            "duration": round(w["duration"], 1),
+            "expected": round(w["duration_expected"], 1),
+            "mo": w["production_id"][1] if w.get("production_id") else "—",
+            "product": pname,
+            "qty": w.get("qty_produced", 0),
+            "workcenter": w["workcenter_id"][1] if w.get("workcenter_id") else "",
+        })
+    return out
+
+
+def wo_start(uid, pwd, wo_id):
+    """Start the timer on a work order."""
+    odoo(uid, pwd, "mrp.workorder", "button_start", [[wo_id]])
+
+
+def wo_stop(uid, pwd, wo_id):
+    """Pause the timer on a work order."""
+    odoo(uid, pwd, "mrp.workorder", "button_pending", [[wo_id]])
+
+
+def wo_finish(uid, pwd, wo_id):
+    """Mark a work order finished."""
+    odoo(uid, pwd, "mrp.workorder", "button_finish", [[wo_id]])
+
+
+def get_time_by_product(uid, pwd):
+    """Aggregate real production time per product (from finished WOs)."""
+    wos = odoo(uid, pwd, "mrp.workorder", "search_read",
+        [[["state", "=", "done"], ["duration", ">", 0]]],
+        {"fields": ["product_id", "duration", "duration_expected", "qty_produced"], "limit": 500})
+    agg = defaultdict(lambda: {"actual": 0, "expected": 0, "qty": 0, "count": 0})
+    for w in wos:
+        if not w.get("product_id"):
+            continue
+        name = w["product_id"][1]
+        agg[name]["actual"] += w["duration"]
+        agg[name]["expected"] += w.get("duration_expected", 0)
+        agg[name]["qty"] += w.get("qty_produced", 0)
+        agg[name]["count"] += 1
+    out = []
+    for name, v in sorted(agg.items(), key=lambda x: -x[1]["actual"]):
+        out.append({
+            "product": name,
+            "actual_min": round(v["actual"], 1),
+            "expected_min": round(v["expected"], 1),
+            "runs": v["count"],
+            "efficiency": round(v["expected"] / v["actual"] * 100) if v["actual"] else 0,
+        })
+    return out[:20]
+
+
 # ── PROCUREMENT ──────────────────────────────────────────────
 def get_rfqs(uid, pwd):
     rfqs = odoo(uid, pwd, "purchase.order", "search_read",
