@@ -430,6 +430,25 @@ def get_mo_detail(uid, pwd, mo_id):
     }
 
 
+def get_running_map(uid, pwd):
+    """{mo_id: worker_first_name} for every MO with a live timer — 2 queries."""
+    logs = odoo(uid, pwd, "mrp.workcenter.productivity", "search_read",
+        [[["date_end", "=", False]]], {"fields": ["workorder_id", "user_id"]})
+    if not logs:
+        return {}
+    wo_ids = list({l["workorder_id"][0] for l in logs if l.get("workorder_id")})
+    wos = odoo(uid, pwd, "mrp.workorder", "read", [wo_ids], {"fields": ["production_id"]})
+    wo_to_mo = {w["id"]: w["production_id"][0] for w in wos if w.get("production_id")}
+    out = {}
+    for l in logs:
+        if not l.get("workorder_id"):
+            continue
+        mo_id = wo_to_mo.get(l["workorder_id"][0])
+        if mo_id:
+            out[mo_id] = l["user_id"][1].split(" ")[0] if l.get("user_id") else "…"
+    return out
+
+
 def mo_validate(uid, pwd, mo_id):
     """Mark the whole MO done. Returns (ok, message)."""
     try:

@@ -415,12 +415,35 @@ def production_screen():
                     st.rerun()
 
         st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
+        running_map = oc.get_running_map(uid, pwd)
+        STATE_CHIP = {
+            "progress":  ("جاري",    "#D4A853", "rgba(212,168,83,.15)"),
+            "confirmed": ("مؤكد",    "#7FB069", "rgba(127,176,105,.15)"),
+            "to_close":  ("للإغلاق", "#6FA8DC", "rgba(111,168,220,.15)"),
+            "done":      ("منتهي",   "#9BA58F", "rgba(155,165,143,.12)"),
+            "draft":     ("مسودة",   "#888",    "rgba(255,255,255,.08)"),
+        }
         for mo in oc.get_mos(uid, pwd):
-            state_ar = {"progress":"🟡 جاري","confirmed":"🟢 مؤكد","done":"⚪ منتهي","draft":"◻️ مسودة","to_close":"🔵 للإغلاق"}.get(mo["state"], mo["state"])
-            if st.button(f"{mo['name']}  ·  {mo['product'][:32]}  ·  {mo['qty']:g}  ·  {state_ar}",
-                         key=f"mo_{mo['id']}", use_container_width=True):
+            label, s_col, s_bg = STATE_CHIP.get(mo["state"], (mo["state"], "#888", "rgba(255,255,255,.08)"))
+            worker = running_map.get(mo["id"])
+            worker_box = (f"<span style='background:rgba(127,176,105,.15);color:#7FB069;"
+                          f"padding:4px 10px;border-radius:8px;font-size:11px'>🟢 {worker}</span>") if worker else ""
+            st.markdown(f"""<div class='task-row' style='margin-bottom:4px'>
+                <div style='display:flex;justify-content:space-between;align-items:center'>
+                  <span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{mo['name']}</span>
+                  <span style='background:{s_bg};color:{s_col};padding:3px 11px;border-radius:20px;font-size:11px;font-weight:600'>{label}</span>
+                </div>
+                <div style='font-size:15px;font-weight:700;margin:9px 0 7px'>{mo['product']}</div>
+                <div style='display:flex;gap:6px;flex-wrap:wrap'>
+                  <span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>📦 {mo['qty']:g} وحدة</span>
+                  <span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>📅 {mo['date']}</span>
+                  {worker_box}
+                </div>
+            </div>""", unsafe_allow_html=True)
+            if st.button("إدارة الأمر ←", key=f"mo_{mo['id']}", use_container_width=True):
                 ss.mo_open = mo["id"]
                 st.rerun()
+            st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
 
     # ── Tab 2: Work order timers (start/stop) ──
     with tab2:
