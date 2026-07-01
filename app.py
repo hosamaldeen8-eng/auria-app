@@ -1,3 +1,4 @@
+# v2 — BOM dropdown + work order timers + Yamamah tracking (deploy trigger)
 """
 ╔══════════════════════════════════════════════════════════╗
 ║   AURIA — Department App (Streamlit)                     ║
@@ -197,6 +198,10 @@ def tasks_screen():
 # ── PRODUCTION ───────────────────────────────────────────────
 def production_screen():
     uid, pwd = ss.uid, ss.pwd
+    # Guard against stale module cache after a deploy
+    if not hasattr(oc, "get_manufacturable_products"):
+        st.error("⚠️ App updating — please reboot from 'Manage app' → Reboot, or wait a moment and refresh.")
+        st.stop()
     tab1, tab2, tab3, tab4 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}", "⏱️ Time/Product"])
 
     # ── Tab 1: MOs + create from BOM dropdown ──
