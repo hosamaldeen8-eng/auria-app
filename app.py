@@ -55,18 +55,19 @@ T = {
 DEPT_COLORS = {"production":"#2E3D2E","procurement":"#633806","operations":"#1A5276",
                "creative":"#8B3A8B","cs":"#A32D2D","management":"#2E3D2E"}
 
-# ── STYLE ────────────────────────────────────────────────────
+# ── STYLE (dark forest theme) ────────────────────────────────
 st.markdown("""
 <style>
-  .stApp { background: #F5F0E8; }
+  .stApp { background: #141B14; }
   #MainMenu, footer, header { visibility: hidden; }
   .block-container { padding-top: 1.5rem; max-width: 480px; }
-  .metric-card { background:#fff; border:1px solid #E5DFD3; border-radius:12px; padding:14px; text-align:center; }
+  .metric-card { background:#1E281E; border:1px solid #2E3D2E; border-radius:12px; padding:14px; text-align:center; color:#E8E4D6; }
   .metric-n { font-size:24px; font-weight:700; margin:0; }
-  .metric-l { font-size:11px; color:#888780; margin:0; }
-  .greeting { background:linear-gradient(135deg,#2E3D2E,#1F2B1F); border-radius:14px; padding:18px; color:#F0EEE2; margin-bottom:16px; }
+  .metric-l { font-size:11px; color:#9BA58F; margin:0; }
+  .greeting { background:linear-gradient(135deg,#2E3D2E,#1A241A); border:1px solid #3A4A38; border-radius:14px; padding:18px; color:#F0EEE2; margin-bottom:16px; }
   .stButton>button { border-radius:10px; font-weight:600; }
-  .task-row { background:#fff; border:1px solid #E5DFD3; border-radius:10px; padding:12px 14px; margin-bottom:8px; }
+  .task-row { background:#1E281E; border:1px solid #2E3D2E; border-radius:10px; padding:12px 14px; margin-bottom:8px; color:#E8E4D6; }
+  .task-row a { color:#7FB069; }
   .badge { font-size:10px; padding:2px 8px; border-radius:20px; }
 </style>
 """, unsafe_allow_html=True)
@@ -150,22 +151,48 @@ def home_screen():
     if kpis:
         cols = st.columns(len(kpis))
         for i, (label, val) in enumerate(kpis):
-            cols[i].markdown(f"<div class='metric-card'><p class='metric-n' style='color:#3B6D11'>{val}</p><p class='metric-l'>{label}</p></div>", unsafe_allow_html=True)
+            cols[i].markdown(f"<div class='metric-card'><p class='metric-n' style='color:#7FB069'>{val}</p><p class='metric-l'>{label}</p></div>", unsafe_allow_html=True)
 
-    # My performance
+    # ── My performance (deep) ──
     st.markdown(f"**{t('my_performance')}**")
-    stats = oc.get_my_stats(uid, pwd)
-    c = st.columns(4)
-    for i, (k, col) in enumerate([("assigned","#2E3D2E"),("done","#3B6D11"),("urgent","#A32D2D"),("overdue","#A32D2D")]):
-        c[i].markdown(f"<div class='metric-card'><p class='metric-n' style='color:{col if stats[k]>0 else '#888'}'>{stats[k]}</p><p class='metric-l'>{t('assigned' if k=='assigned' else 'completed' if k=='done' else k)}</p></div>", unsafe_allow_html=True)
+    perf = oc.get_my_performance(uid, pwd)
 
-    # Company snapshot
-    st.markdown(f"**{t('company')}**")
-    snap = oc.get_company_snapshot(uid, pwd)
+    # Row 1: core numbers
     c = st.columns(4)
-    for i, (k, label, col) in enumerate([("orders",t("orders"),"#D4A853"),("revenue",t("revenue"),"#D4A853"),("deliveries",t("deliveries"),"#3B6D11"),("mos",t("mos"),"#1A5276")]):
-        val = f"{snap[k]:,}" if k == "revenue" else snap[k]
-        c[i].markdown(f"<div class='metric-card'><p class='metric-n' style='color:{col};font-size:18px'>{val}</p><p class='metric-l'>{label}</p></div>", unsafe_allow_html=True)
+    core = [
+        (perf["open"],      "مفتوح",   "#E8E4D6"),
+        (perf["done_week"], "أُنجز هذا الأسبوع", "#7FB069"),
+        (perf["urgent"],    t("urgent"),  "#E07070" if perf["urgent"] else "#888"),
+        (perf["overdue"],   t("overdue"), "#E07070" if perf["overdue"] else "#7FB069"),
+    ]
+    for i, (n, l, col) in enumerate(core):
+        c[i].markdown(f"<div class='metric-card'><p class='metric-n' style='color:{col}'>{n}</p><p class='metric-l'>{l}</p></div>", unsafe_allow_html=True)
+
+    # Row 2: completion rate bar + activity
+    rate = perf["completion_rate"]
+    rate_color = "#7FB069" if rate >= 60 else "#D4A853" if rate >= 30 else "#E07070"
+    st.markdown(f"""<div class='metric-card' style='text-align:start;margin-top:6px'>
+        <div style='display:flex;justify-content:space-between;margin-bottom:5px'>
+          <span style='font-size:12px'>نسبة الإنجاز الكلية</span>
+          <b style='color:{rate_color}'>{rate}%</b>
+        </div>
+        <div style='background:rgba(128,128,128,.25);border-radius:6px;height:8px;overflow:hidden'>
+          <div style='width:{rate}%;height:100%;background:{rate_color}'></div>
+        </div>
+        <div style='display:flex;justify-content:space-between;margin-top:8px;font-size:11px;opacity:.75'>
+          <span>💬 {perf['notes_week']} تحديث هذا الأسبوع</span>
+          <span>📝 التقرير اليومي: {"✅ مُرسل" if perf['report_today'] else "❌ لم يُرسل"} · {perf['report_week']}/7</span>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # Row 3: overdue names (if any) + next deadlines
+    if perf["overdue_names"]:
+        st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
+        st.error("⏰ متأخر: " + " · ".join(perf["overdue_names"]))
+    if perf["next_due"]:
+        nd = perf["next_due"]
+        items = "".join(f"<div style='display:flex;justify-content:space-between;padding:3px 0;font-size:12px'><span>{x['name'][:38]}</span><span style='opacity:.6'>{x['date_deadline']}</span></div>" for x in nd)
+        st.markdown(f"<div class='metric-card' style='text-align:start;margin-top:6px'><div style='font-size:11px;opacity:.6;margin-bottom:4px'>المواعيد القادمة</div>{items}</div>", unsafe_allow_html=True)
 
 # ── TASKS ────────────────────────────────────────────────────
 def tasks_screen():
@@ -202,7 +229,7 @@ def production_screen():
     if not hasattr(oc, "get_manufacturable_products"):
         st.error("⚠️ App updating — please reboot from 'Manage app' → Reboot, or wait a moment and refresh.")
         st.stop()
-    tab1, tab2, tab3, tab4 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}", "⏱️ Time/Product"])
+    tab1, tab2, tab3 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}"])
 
     # ── Tab 1: MOs + create from BOM dropdown ──
     with tab1:
@@ -232,7 +259,7 @@ def production_screen():
         st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
         for mo in oc.get_mos(uid, pwd):
             state_colors = {"progress":"#D4A853","confirmed":"#3B6D11","done":"#888","draft":"#aaa"}
-            st.markdown(f"<div class='task-row'><span style='font-family:monospace;color:#D4A853'>{mo['name']}</span> <span class='badge' style='background:#eee;color:{state_colors.get(mo['state'],'#888')}'>{mo['state']}</span><br><b>{mo['product']}</b><br><span style='color:#888;font-size:12px'>{mo['qty']:g} · {mo['date']}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='task-row'><span style='font-family:monospace;color:#D4A853'>{mo['name']}</span> <span class='badge' style='background:rgba(255,255,255,.1);color:{state_colors.get(mo['state'],'#888')}'>{mo['state']}</span><br><b>{mo['product']}</b><br><span style='color:#888;font-size:12px'>{mo['qty']:g} · {mo['date']}</span></div>", unsafe_allow_html=True)
 
     # ── Tab 2: Work order timers (start/stop) ──
     with tab2:
@@ -249,7 +276,7 @@ def production_screen():
                   <div><b>{w['product']}</b><br><span style='font-family:monospace;color:#888;font-size:11px'>{w['mo']}</span></div>
                   <span style='font-size:11px'>{working_dot} {state_ar}</span>
                 </div>
-                <div style='margin-top:6px;background:#eee;border-radius:6px;height:6px;overflow:hidden'>
+                <div style='margin-top:6px;background:rgba(255,255,255,.12);border-radius:6px;height:6px;overflow:hidden'>
                   <div style='width:{pct}%;height:100%;background:{"#A32D2D" if pct>100 else "#3B6D11"}'></div>
                 </div>
                 <div style='font-size:11px;color:#888;margin-top:3px'>{w['duration']:g} / {w['expected']:g} دقيقة ({pct}%)</div>
@@ -277,19 +304,6 @@ def production_screen():
             color = "#A32D2D" if item["qty"] == 0 else "#D4A853"
             st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span><b>{item['name']}</b><br><span style='color:#888;font-size:11px'>{item['loc']}</span></span><span style='font-size:18px;font-weight:700;color:{color}'>{item['qty']:g}</span></div>", unsafe_allow_html=True)
 
-    # ── Tab 4: Time per product ──
-    with tab4:
-        st.caption("الوقت الفعلي لكل منتج (من أوامر الشغل المنتهية)")
-        for tp in oc.get_time_by_product(uid, pwd):
-            eff_color = "#3B6D11" if tp["efficiency"] >= 100 else "#D4A853" if tp["efficiency"] >= 60 else "#A32D2D"
-            hrs = tp["actual_min"] / 60
-            st.markdown(f"""<div class='task-row'>
-                <div style='display:flex;justify-content:space-between'>
-                  <b>{tp['product']}</b>
-                  <span style='color:{eff_color};font-weight:600'>{tp['efficiency']}%</span>
-                </div>
-                <div style='font-size:11px;color:#888;margin-top:3px'>{hrs:.1f} ساعة فعلية · {tp['runs']} دورة إنتاج</div>
-            </div>""", unsafe_allow_html=True)
 
 # ── PROCUREMENT ──────────────────────────────────────────────
 def procurement_screen():
@@ -311,7 +325,7 @@ def operations_screen():
 
     with tab1:
         for d in oc.get_deliveries(uid, pwd):
-            st.markdown(f"<div class='task-row'><span style='font-family:monospace;color:#D4A853'>{d['name']}</span> <span class='badge' style='background:#eee;color:#888'>{d['state']}</span><br><b>{d['customer']}</b> · <span style='color:#888;font-size:12px'>{d['date']}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='task-row'><span style='font-family:monospace;color:#D4A853'>{d['name']}</span> <span class='badge' style='background:rgba(255,255,255,.1);color:#888'>{d['state']}</span><br><b>{d['customer']}</b> · <span style='color:#888;font-size:12px'>{d['date']}</span></div>", unsafe_allow_html=True)
 
     with tab2:
         # Live Yamamah delivery summary

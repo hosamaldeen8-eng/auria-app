@@ -95,6 +95,65 @@ def get_my_stats(uid, pwd):
     }
 
 
+def get_my_performance(uid, pwd):
+    """Deeper personal tracking: week activity, notes, report status, WO time."""
+    from datetime import date, timedelta
+    today = date.today()
+    week_ago = str(today - timedelta(days=7))
+    today_s = str(today)
+
+    # Tasks
+    tasks = odoo(uid, pwd, "project.task", "search_read",
+        [[["user_ids", "in", [uid]]]],
+        {"fields": ["name", "stage_id", "priority", "date_deadline", "project_id", "write_date"]})
+    def st(t): return t["stage_id"][1] if t["stage_id"] else None
+
+    open_tasks = [t for t in tasks if not is_done(st(t))]
+    done_tasks = [t for t in tasks if is_done(st(t))]
+    done_this_week = [t for t in done_tasks if (t.get("write_date") or "") >= week_ago]
+    overdue_list = [t for t in open_tasks
+                    if t["date_deadline"] and t["date_deadline"] < today_s]
+
+    # Notes/messages I posted this week (activity signal)
+    notes_week = odoo(uid, pwd, "mail.message", "search_count",
+        [[["author_id.user_ids", "in", [uid]],
+          ["date", ">=", f"{week_ago} 00:00:00"],
+          ["message_type", "in", ["comment", "email"]]]])
+
+    # Daily report submitted today?
+    report_task = DAILY_REPORT_TASKS.get(uid)
+    report_today = False
+    report_week = 0
+    if report_task:
+        report_today = odoo(uid, pwd, "mail.message", "search_count",
+            [[["res_id", "=", report_task], ["model", "=", "project.task"],
+              ["date", ">=", f"{today_s} 00:00:00"],
+              ["message_type", "in", ["comment", "email"]]]]) > 0
+        report_week = odoo(uid, pwd, "mail.message", "search_count",
+            [[["res_id", "=", report_task], ["model", "=", "project.task"],
+              ["date", ">=", f"{week_ago} 00:00:00"],
+              ["message_type", "in", ["comment", "email"]]]])
+
+    # Completion rate
+    rate = round(len(done_tasks) / len(tasks) * 100) if tasks else 0
+
+    return {
+        "assigned": len(tasks),
+        "open": len(open_tasks),
+        "done": len(done_tasks),
+        "done_week": len(done_this_week),
+        "urgent": sum(1 for t in open_tasks if t["priority"] == "1"),
+        "overdue": len(overdue_list),
+        "overdue_names": [t["name"][:35] for t in overdue_list[:3]],
+        "notes_week": notes_week,
+        "report_today": report_today,
+        "report_week": report_week,
+        "completion_rate": rate,
+        "next_due": sorted([t for t in open_tasks if t["date_deadline"]],
+                           key=lambda x: x["date_deadline"])[:3],
+    }
+
+
 def get_dept_kpis(uid, pwd, dept):
     today = today_str()
     if dept == "production":
@@ -282,31 +341,28 @@ def get_workorders(uid, pwd, product_filter=None):
     return out
 
 
-def wo_start(uid, pwd, wo_id):
-    """Start the timer on a work order. Returns (ok, message)."""
+def _wo_button(uid, pwd, wo_id, method, ok_msg):
+    """Call a workorder button; Odoo buttons return None which XML-RPC
+    can't marshal — that 'error' actually means success."""
     try:
-        odoo(uid, pwd, "mrp.workorder", "button_start", [[wo_id]])
-        return True, "بدأ العمل"
+        odoo(uid, pwd, "mrp.workorder", method, [[wo_id]])
+        return True, ok_msg
     except Exception as e:
+        if "cannot marshal None" in str(e):
+            return True, ok_msg  # action succeeded; None return is the quirk
         return False, _clean_odoo_error(e)
+
+
+def wo_start(uid, pwd, wo_id):
+    return _wo_button(uid, pwd, wo_id, "button_start", "بدأ العمل")
 
 
 def wo_stop(uid, pwd, wo_id):
-    """Pause the timer. Returns (ok, message)."""
-    try:
-        odoo(uid, pwd, "mrp.workorder", "button_pending", [[wo_id]])
-        return True, "تم الإيقاف"
-    except Exception as e:
-        return False, _clean_odoo_error(e)
+    return _wo_button(uid, pwd, wo_id, "button_pending", "تم الإيقاف")
 
 
 def wo_finish(uid, pwd, wo_id):
-    """Mark a work order finished. Returns (ok, message)."""
-    try:
-        odoo(uid, pwd, "mrp.workorder", "button_finish", [[wo_id]])
-        return True, "تم الإنهاء"
-    except Exception as e:
-        return False, _clean_odoo_error(e)
+    return _wo_button(uid, pwd, wo_id, "button_finish", "تم الإنهاء")
 
 
 def _clean_odoo_error(e):
