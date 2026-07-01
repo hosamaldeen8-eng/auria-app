@@ -7,7 +7,7 @@
 ╚══════════════════════════════════════════════════════════╝
 """
 import streamlit as st
-import extra_streamlit_components as stx
+import streamlit.components.v1 as components
 import odoo_client as oc
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -97,24 +97,40 @@ ss.setdefault("mo_open", None)
 def t(key):
     return T[ss.lang].get(key, key)
 
-# ── PERSISTENT LOGIN (cookies) ───────────────────────────────
-cookie_mgr = stx.CookieManager(key="auria_cookies")
-
+# ── PERSISTENT LOGIN (cookies, no external component) ───────
+# Read: st.context.cookies (native Streamlit ≥1.37, reliable)
+# Write/delete: a tiny JS snippet — parent.document.cookie
 def save_login_cookie(email, pwd):
     token = base64.b64encode(f"{email}|{pwd}".encode()).decode()
-    cookie_mgr.set("auria_auth", token,
-                   expires_at=datetime.now() + timedelta(days=30),
-                   key="ck_set")
+    components.html(
+        f"<script>parent.document.cookie = 'auria_auth={token}; "
+        f"max-age=2592000; path=/; SameSite=Lax';</script>",
+        height=0,
+    )
 
 def clear_login_cookie():
-    try:
-        cookie_mgr.delete("auria_auth", key="ck_del")
-    except Exception:
-        pass
+    components.html(
+        "<script>parent.document.cookie = "
+        "'auria_auth=; max-age=0; path=/; SameSite=Lax';</script>",
+        height=0,
+    )
+
+# Deferred cookie ops — st.rerun() can interrupt the JS iframe before it
+# executes, so writes happen on the render AFTER the rerun.
+if ss.get("pending_cookie_save") and ss.uid:
+    email_c, pwd_c = ss.pop("pending_cookie_save")
+    save_login_cookie(email_c, pwd_c)
+if ss.get("pending_cookie_clear"):
+    ss.pop("pending_cookie_clear")
+    clear_login_cookie()
 
 # Auto-login: if no session but a saved cookie exists, sign in silently
 if not ss.uid and not ss.get("auto_login_tried"):
-    raw = cookie_mgr.get("auria_auth")
+    raw = None
+    try:
+        raw = st.context.cookies.get("auria_auth")
+    except Exception:
+        pass
     if raw:
         ss.auto_login_tried = True
         try:
@@ -141,7 +157,7 @@ def login_screen():
             uid, info = oc.authenticate(email, pwd)
             if uid:
                 ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email.strip()
-                save_login_cookie(email.strip(), pwd)   # stay signed in 30 days
+                ss.pending_cookie_save = (email.strip(), pwd)  # stay signed in 30 days
                 ss.screen = "home"
                 st.rerun()
             else:
@@ -613,7 +629,7 @@ def profile_screen():
 
     st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
     if st.button(f"🚪 {t('logout')}", use_container_width=True, type="primary", key="prof_logout"):
-        clear_login_cookie()
+        ss.pending_cookie_clear = True
         for k in ["uid","pwd","info","email","cs_open","mo_open","auto_login_tried"]:
             ss.pop(k, None)
         ss.auto_login_tried = True  # don't instantly re-login from cookie
