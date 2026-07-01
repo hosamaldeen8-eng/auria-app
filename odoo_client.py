@@ -108,9 +108,15 @@ def get_dept_kpis(uid, pwd, dept):
             ("Confirmed POs", odoo(uid, pwd, "purchase.order", "search_count", [[["state", "=", "purchase"]]])),
         ]
     if dept == "operations":
+        today = today_str()
+        deliv = odoo(uid, pwd, "stock.picking", "search_count", [[["date_done", ">=", f"{today} 00:00:00"], ["state", "=", "done"]]])
+        # Yamamah live: out for delivery + failed
+        out_delivery = odoo(uid, pwd, "accurate.shipment", "search_count", [[["state", "=", "sent"]]])
+        returned = odoo(uid, pwd, "accurate.shipment", "search_count", [[["state", "=", "returned"]]])
         return [
-            ("Deliveries Today", odoo(uid, pwd, "stock.picking", "search_count", [[["date_done", ">=", f"{today} 00:00:00"], ["state", "=", "done"]]])),
-            ("Pending Orders", odoo(uid, pwd, "sale.order", "search_count", [[["state", "=", "sale"]]])),
+            ("Deliveries Today", deliv),
+            ("قيد التوصيل", out_delivery),
+            ("مرتجع", returned),
         ]
     if dept == "cs":
         proj = DEPT_PROJECT["cs"]
@@ -263,6 +269,94 @@ def get_ticket_messages(uid, pwd, task_id):
 def reply_ticket(uid, pwd, task_id, message):
     odoo(uid, pwd, "project.task", "message_post", [[task_id]],
         {"body": f"<p>{message}</p>", "message_type": "comment", "subtype_xmlid": "mail.mt_comment"})
+
+
+# ── YAMAMAH DELIVERY (Accurate Logistics API) ────────────────
+# Real status names from the Yamamah API, with display colors
+YAMAMAH_STATUS = {
+    "طلب شحن":                {"en": "Shipment requested", "color": "#633806", "bg": "#FFF3CD"},
+    "قيد الارسال للمندوب":     {"en": "Assigning courier",   "color": "#633806", "bg": "#FFF3CD"},
+    "تم الاستلام بالمخزن":     {"en": "At warehouse",        "color": "#1A5276", "bg": "#E6F1FB"},
+    "قيد التوصيل":            {"en": "Out for delivery",    "color": "#1A5276", "bg": "#E6F1FB"},
+    "تم التسليم":             {"en": "Delivered",           "color": "#3B6D11", "bg": "#EAF3DE"},
+    "تعذر التسليم":           {"en": "Delivery failed",     "color": "#A32D2D", "bg": "#FCEBEB"},
+    "انتظار لاعادة التوصيل":   {"en": "Awaiting re-delivery","color": "#633806", "bg": "#FFF3CD"},
+    "ارتجاع للراسل":          {"en": "Returning to sender", "color": "#A32D2D", "bg": "#FCEBEB"},
+    "Returned":              {"en": "Returned",            "color": "#A32D2D", "bg": "#FCEBEB"},
+    "Cancelled":             {"en": "Cancelled",           "color": "#888780", "bg": "#F1EFE8"},
+}
+
+SHIPMENT_STATE = {
+    "draft":     {"ar": "مسودة",   "en": "Draft",     "color": "#888"},
+    "sent":      {"ar": "أُرسلت",   "en": "Sent",      "color": "#1A5276"},
+    "delivered": {"ar": "سُلّمت",   "en": "Delivered", "color": "#3B6D11"},
+    "returned":  {"ar": "مرتجعة",  "en": "Returned",  "color": "#A32D2D"},
+    "cancelled": {"ar": "ملغاة",   "en": "Cancelled", "color": "#888"},
+    "error":     {"ar": "خطأ",     "en": "Error",     "color": "#A32D2D"},
+}
+
+
+def get_shipments(uid, pwd, state_filter=None, query=""):
+    """Get Yamamah shipments with live delivery status."""
+    domain = []
+    if state_filter and state_filter != "all":
+        domain.append(["state", "=", state_filter])
+    ships = odoo(uid, pwd, "accurate.shipment", "search_read", [domain],
+        {"fields": ["id", "name", "code", "state", "api_status_name", "tracking_url",
+                    "sale_id", "recipient_name", "recipient_mobile", "recipient_zone_id",
+                    "fee_total", "fee_collection", "payment_type_code", "date"],
+         "limit": 50, "order": "id desc"})
+    out = []
+    for s in ships:
+        if query:
+            hay = f"{s.get('name','')} {s.get('recipient_name','')} {s.get('sale_id') and s['sale_id'][1] or ''}"
+            if query.lower() not in hay.lower():
+                continue
+        out.append({
+            "id": s["id"], "name": s["name"], "code": s.get("code", ""),
+            "state": s["state"],
+            "api_status": s.get("api_status_name") or "—",
+            "tracking_url": s.get("tracking_url", ""),
+            "order": s["sale_id"][1] if s.get("sale_id") else "—",
+            "recipient": s.get("recipient_name", "—"),
+            "mobile": s.get("recipient_mobile", ""),
+            "zone": s["recipient_zone_id"][1] if s.get("recipient_zone_id") else "—",
+            "cod": s.get("fee_collection", 0),
+            "total": s.get("fee_total", 0),
+            "date": (s.get("date") or "")[:16],
+        })
+    return out
+
+
+def get_shipment_summary(uid, pwd):
+    """Count shipments by live Yamamah status for the ops dashboard."""
+    ships = odoo(uid, pwd, "accurate.shipment", "search_read", [[]],
+        {"fields": ["state", "api_status_name"], "limit": 3000})
+    from collections import Counter
+    by_state = Counter(s.get("state") or "?" for s in ships)
+    by_status = Counter(s.get("api_status_name") or "?" for s in ships)
+    return {"total": len(ships), "by_state": dict(by_state), "by_status": dict(by_status)}
+
+
+def get_order_delivery_status(uid, pwd, sale_order_name):
+    """Look up the Yamamah delivery status for a specific order (for CS)."""
+    ship = odoo(uid, pwd, "accurate.shipment", "search_read",
+        [[["sale_id.name", "=", sale_order_name]]],
+        {"fields": ["name", "state", "api_status_name", "tracking_url",
+                    "recipient_name", "recipient_mobile", "fee_collection", "date"],
+         "limit": 1, "order": "id desc"})
+    if not ship:
+        return None
+    s = ship[0]
+    return {
+        "shipment": s["name"], "state": s["state"],
+        "api_status": s.get("api_status_name") or "—",
+        "tracking_url": s.get("tracking_url", ""),
+        "recipient": s.get("recipient_name", ""),
+        "mobile": s.get("recipient_mobile", ""),
+        "cod": s.get("fee_collection", 0),
+        "date": (s.get("date") or "")[:16],
+    }
 
 
 # ── DAILY REPORT ─────────────────────────────────────────────

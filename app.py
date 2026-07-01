@@ -224,11 +224,47 @@ def procurement_screen():
 # ── OPERATIONS ───────────────────────────────────────────────
 def operations_screen():
     uid, pwd = ss.uid, ss.pwd
-    tab1, tab2 = st.tabs([f"🚚 {t('deliveries')}", f"🔍 {t('order_lookup')}"])
+    tab1, tab2, tab3 = st.tabs([f"🚚 {t('deliveries')}", "📦 يمامة Tracking", f"🔍 {t('order_lookup')}"])
+
     with tab1:
         for d in oc.get_deliveries(uid, pwd):
             st.markdown(f"<div class='task-row'><span style='font-family:monospace;color:#D4A853'>{d['name']}</span> <span class='badge' style='background:#eee;color:#888'>{d['state']}</span><br><b>{d['customer']}</b> · <span style='color:#888;font-size:12px'>{d['date']}</span></div>", unsafe_allow_html=True)
+
     with tab2:
+        # Live Yamamah delivery summary
+        summ = oc.get_shipment_summary(uid, pwd)
+        st.markdown(f"**{summ['total']} شحنة عبر يمامة**")
+        # Status breakdown chips
+        chips = ""
+        for status, count in sorted(summ["by_status"].items(), key=lambda x: -x[1]):
+            if status == "?": continue
+            meta = oc.YAMAMAH_STATUS.get(status, {"color": "#888", "bg": "#eee"})
+            chips += f"<span style='display:inline-block;margin:2px;padding:3px 9px;border-radius:20px;font-size:11px;background:{meta['bg']};color:{meta['color']}'>{status} · {count}</span>"
+        st.markdown(chips, unsafe_allow_html=True)
+        st.markdown("<hr style='margin:10px 0'>", unsafe_allow_html=True)
+
+        # Filter by state
+        state_filter = st.selectbox("Filter", ["sent", "delivered", "returned", "all"],
+                                     format_func=lambda x: {"sent": "🚚 قيد التوصيل (Sent)", "delivered": "✅ تم التسليم", "returned": "↩️ مرتجع", "all": "الكل"}[x])
+        query = st.text_input(t("search"), key="ymm_search", placeholder="Order # or recipient")
+
+        for s in oc.get_shipments(uid, pwd, state_filter, query):
+            meta = oc.YAMAMAH_STATUS.get(s["api_status"], {"color": "#888", "bg": "#eee"})
+            track_link = f"<a href='{s['tracking_url']}' target='_blank' style='color:#1A5276;font-size:11px'>🔗 تتبّع {s['code']}</a>" if s["tracking_url"] else ""
+            cod_txt = f" · COD {s['cod']:,.0f}" if s["cod"] else ""
+            st.markdown(f"""<div class='task-row'>
+                <div style='display:flex;justify-content:space-between;align-items:start'>
+                  <div>
+                    <span style='font-family:monospace;color:#D4A853;font-size:11px'>{s['order']}</span><br>
+                    <b>{s['recipient']}</b><br>
+                    <span style='color:#888;font-size:11px'>{s['zone']} · {s['mobile']}{cod_txt}</span>
+                  </div>
+                  <span style='padding:3px 9px;border-radius:20px;font-size:10px;background:{meta['bg']};color:{meta['color']};white-space:nowrap'>{s['api_status']}</span>
+                </div>
+                <div style='margin-top:4px'>{track_link}</div>
+            </div>""", unsafe_allow_html=True)
+
+    with tab3:
         q = st.text_input(t("search"), key="ord_search")
         for o in oc.get_orders(uid, pwd, q):
             st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span><span style='font-family:monospace;color:#D4A853'>{o['name']}</span><br><b>{o['customer']}</b></span><span style='font-weight:700;color:#D4A853'>{o['total']:,.0f}</span></div>", unsafe_allow_html=True)
@@ -247,21 +283,48 @@ def cs_screen():
     if "cs_open" not in ss:
         ss.cs_open = None
 
-    if ss.cs_open:
-        ticket = ss.cs_open
-        if st.button("← " + t("tickets")):
-            ss.cs_open = None; st.rerun()
-        st.markdown(f"**{ticket['customer']}** — {ticket['issue']}")
-        for m in oc.get_ticket_messages(uid, pwd, ticket["id"]):
-            st.markdown(f"<div class='task-row'><b style='font-size:12px'>{m['author']}</b><br>{m['text']}<br><span style='color:#aaa;font-size:10px'>{m['date']}</span></div>", unsafe_allow_html=True)
-        reply = st.text_input(t("reply"), key="cs_reply")
-        if st.button(t("post"), type="primary"):
-            if reply.strip():
-                oc.reply_ticket(uid, pwd, ticket["id"], reply); st.success("✓"); st.rerun()
-    else:
-        for tk in oc.get_tickets(uid, pwd):
-            if st.button(f"💬 {tk['customer']} — {tk['issue'][:30]}  ·  {tk['status']}", key=f"tk_{tk['id']}", use_container_width=True):
-                ss.cs_open = tk; st.rerun()
+    tab1, tab2 = st.tabs([f"💬 {t('tickets')}", "📦 حالة الطلب"])
+
+    with tab1:
+        if ss.cs_open:
+            ticket = ss.cs_open
+            if st.button("← " + t("tickets")):
+                ss.cs_open = None; st.rerun()
+            st.markdown(f"**{ticket['customer']}** — {ticket['issue']}")
+            for m in oc.get_ticket_messages(uid, pwd, ticket["id"]):
+                st.markdown(f"<div class='task-row'><b style='font-size:12px'>{m['author']}</b><br>{m['text']}<br><span style='color:#aaa;font-size:10px'>{m['date']}</span></div>", unsafe_allow_html=True)
+            reply = st.text_input(t("reply"), key="cs_reply")
+            if st.button(t("post"), type="primary"):
+                if reply.strip():
+                    oc.reply_ticket(uid, pwd, ticket["id"], reply); st.success("✓"); st.rerun()
+        else:
+            for tk in oc.get_tickets(uid, pwd):
+                if st.button(f"💬 {tk['customer']} — {tk['issue'][:30]}  ·  {tk['status']}", key=f"tk_{tk['id']}", use_container_width=True):
+                    ss.cs_open = tk; st.rerun()
+
+    with tab2:
+        st.caption("ابحث عن طلب لمعرفة حالة التوصيل من يمامة")
+        order_no = st.text_input("رقم الطلب", key="cs_order_lookup", placeholder="S02486")
+        if order_no.strip():
+            status = oc.get_order_delivery_status(uid, pwd, order_no.strip())
+            if status:
+                meta = oc.YAMAMAH_STATUS.get(status["api_status"], {"color": "#888", "bg": "#eee"})
+                track = f"<a href='{status['tracking_url']}' target='_blank' style='color:#1A5276'>🔗 رابط التتبّع</a>" if status["tracking_url"] else ""
+                st.markdown(f"""<div class='task-row'>
+                    <div style='display:flex;justify-content:space-between;align-items:center'>
+                      <b>{status['recipient']}</b>
+                      <span style='padding:4px 12px;border-radius:20px;font-size:12px;background:{meta['bg']};color:{meta['color']}'>{status['api_status']}</span>
+                    </div>
+                    <div style='color:#888;font-size:12px;margin-top:6px'>
+                      شحنة: {status['shipment']}<br>
+                      الهاتف: {status['mobile']}<br>
+                      COD: {status['cod']:,.0f} د.ل<br>
+                      التاريخ: {status['date']}
+                    </div>
+                    <div style='margin-top:8px'>{track}</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.warning(f"لا توجد شحنة للطلب {order_no}")
 
 # ── DAILY REPORT ─────────────────────────────────────────────
 def report_screen():
