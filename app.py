@@ -257,12 +257,18 @@ def production_screen():
             c1, c2, c3 = st.columns(3)
             with c1:
                 if not w["working"] and st.button("▶️ ابدأ", key=f"start_{w['id']}", use_container_width=True):
-                    oc.wo_start(uid, pwd, w["id"]); st.rerun()
+                    ok, msg = oc.wo_start(uid, pwd, w["id"])
+                    if ok: st.rerun()
+                    else: st.error(msg)
                 if w["working"] and st.button("⏸️ أوقف", key=f"stop_{w['id']}", use_container_width=True):
-                    oc.wo_stop(uid, pwd, w["id"]); st.rerun()
+                    ok, msg = oc.wo_stop(uid, pwd, w["id"])
+                    if ok: st.rerun()
+                    else: st.error(msg)
             with c2:
                 if st.button("✅ أنهِ", key=f"fin_{w['id']}", use_container_width=True):
-                    oc.wo_finish(uid, pwd, w["id"]); st.success("✓"); st.rerun()
+                    ok, msg = oc.wo_finish(uid, pwd, w["id"])
+                    if ok: st.success("✓"); st.rerun()
+                    else: st.error(msg)
 
     # ── Tab 3: Inventory ──
     with tab3:

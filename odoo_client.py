@@ -283,18 +283,50 @@ def get_workorders(uid, pwd, product_filter=None):
 
 
 def wo_start(uid, pwd, wo_id):
-    """Start the timer on a work order."""
-    odoo(uid, pwd, "mrp.workorder", "button_start", [[wo_id]])
+    """Start the timer on a work order. Returns (ok, message)."""
+    try:
+        odoo(uid, pwd, "mrp.workorder", "button_start", [[wo_id]])
+        return True, "بدأ العمل"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
 
 
 def wo_stop(uid, pwd, wo_id):
-    """Pause the timer on a work order."""
-    odoo(uid, pwd, "mrp.workorder", "button_pending", [[wo_id]])
+    """Pause the timer. Returns (ok, message)."""
+    try:
+        odoo(uid, pwd, "mrp.workorder", "button_pending", [[wo_id]])
+        return True, "تم الإيقاف"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
 
 
 def wo_finish(uid, pwd, wo_id):
-    """Mark a work order finished."""
-    odoo(uid, pwd, "mrp.workorder", "button_finish", [[wo_id]])
+    """Mark a work order finished. Returns (ok, message)."""
+    try:
+        odoo(uid, pwd, "mrp.workorder", "button_finish", [[wo_id]])
+        return True, "تم الإنهاء"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def _clean_odoo_error(e):
+    """Turn a raw Odoo XML-RPC fault into a short readable message."""
+    msg = str(e)
+    if 'type "view"' in msg or "view (SJ)" in msg or "view (HD)" in msg:
+        return "خطأ في إعداد المخازن: الموقع المصدر نوعه 'view' — يحتاج مود ضبط مسارات المخزن."
+    if "reserved" in msg.lower() or "reservation" in msg.lower():
+        return "المكوّنات غير محجوزة بعد — تحقّق من توفر المواد."
+    if "UserError" in msg:
+        import re
+        m = re.search(r"UserError\('([^']+)'", msg)
+        if m:
+            return m.group(1)[:150]
+    # Extract the Fault text
+    import re
+    m = re.search(r"Fault \d+: '([^']+)'", msg)
+    if m:
+        return m.group(1)[:150]
+    return msg[:150]
 
 
 def get_time_by_product(uid, pwd):
