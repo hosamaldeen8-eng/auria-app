@@ -396,18 +396,21 @@ def get_mo_detail(uid, pwd, mo_id):
         for w in wos:
             elapsed = w["duration"]  # accumulated (closed logs)
             running_since = None
-            if w["is_user_working"]:
-                # Open time log → add live elapsed
-                open_log = odoo(uid, pwd, "mrp.workcenter.productivity", "search_read",
-                    [[["workorder_id", "=", w["id"]], ["date_end", "=", False]]],
-                    {"fields": ["date_start"], "limit": 1, "order": "id desc"})
-                if open_log:
-                    running_since = open_log[0]["date_start"]
-                    elapsed += _elapsed_min(running_since)
+            worker = None
+            # Open time log (ANY user) → live elapsed + who's working.
+            # Note: is_user_working is per-caller, so check the log directly.
+            open_log = odoo(uid, pwd, "mrp.workcenter.productivity", "search_read",
+                [[["workorder_id", "=", w["id"]], ["date_end", "=", False]]],
+                {"fields": ["date_start", "user_id"], "limit": 1, "order": "id desc"})
+            if open_log:
+                running_since = open_log[0]["date_start"]
+                elapsed += _elapsed_min(running_since)
+                worker = open_log[0]["user_id"][1] if open_log[0].get("user_id") else None
             total_elapsed += elapsed
             workorders.append({
                 "id": w["id"], "name": w["name"],
-                "state": w["state"], "working": w["is_user_working"],
+                "state": w["state"], "working": bool(open_log),
+                "worker": worker,
                 "elapsed": round(elapsed, 1),
                 "expected": round(w["duration_expected"], 1),
                 "workcenter": w["workcenter_id"][1] if w.get("workcenter_id") else "",

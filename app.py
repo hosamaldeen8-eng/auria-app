@@ -353,7 +353,7 @@ def mo_detail_screen():
               <div style='width:{pct}%;height:100%;background:{"#E07070" if pct>100 else "#7FB069"}'></div>
             </div>
             <div style='display:flex;justify-content:space-between;font-size:11px;opacity:.7;margin-top:3px'>
-              <span>⏱ {e_h}:{e_m:02d} {"(يعمل الآن)" if w['working'] else ""}</span>
+              <span>⏱ {e_h}:{e_m:02d} {f"· 🟢 يعمل الآن: {w['worker']}" if w.get('worker') else ""}</span>
               <span>متوقع: {w['expected']:g} دقيقة</span>
             </div>
         </div>""", unsafe_allow_html=True)
