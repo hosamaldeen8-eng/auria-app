@@ -257,9 +257,13 @@ def post_task_note(uid, pwd, task_id, note):
 
 
 # ── PRODUCTION ───────────────────────────────────────────────
-def get_mos(uid, pwd):
-    mos = odoo(uid, pwd, "mrp.production", "search_read",
-        [[["state", "!=", "cancel"]]],
+def get_mos(uid, pwd, state="all", query=""):
+    domain = [["state", "!=", "cancel"]]
+    if state != "all":
+        domain.append(["state", "=", state])
+    if query:
+        domain += ["|", ["name", "ilike", query], ["product_id.name", "ilike", query]]
+    mos = odoo(uid, pwd, "mrp.production", "search_read", [domain],
         {"fields": ["id", "name", "product_id", "product_qty", "state", "date_start"],
          "limit": 30, "order": "date_start desc"})
     return [{
@@ -270,18 +274,30 @@ def get_mos(uid, pwd):
     } for m in mos]
 
 
-def get_inventory(uid, pwd, query=""):
+def get_stock_locations(uid, pwd):
+    """Internal storage locations that actually hold stock (for the filter)."""
+    quants = odoo(uid, pwd, "stock.quant", "search_read",
+        [[["location_id.usage", "=", "internal"], ["quantity", ">", 0]]],
+        {"fields": ["location_id"], "limit": 500})
+    names = sorted({q["location_id"][1] for q in quants if q.get("location_id")})
+    return names
+
+
+def get_inventory(uid, pwd, query="", location="all"):
     domain = [["location_id.usage", "=", "internal"], ["quantity", ">", 0]]
+    if location != "all":
+        domain.append(["location_id.complete_name", "=", location])
     quants = odoo(uid, pwd, "stock.quant", "search_read", [domain],
         {"fields": ["product_id", "quantity", "location_id"], "limit": 300})
-    agg = defaultdict(lambda: {"qty": 0, "loc": ""})
+    agg = defaultdict(lambda: {"qty": 0, "locs": set()})
     for qt in quants:
         name = qt["product_id"][1]
         if query and query.lower() not in name.lower():
             continue
         agg[name]["qty"] += qt["quantity"]
-        agg[name]["loc"] = qt["location_id"][1].split("/")[-1] if qt["location_id"] else ""
-    return [{"name": n, "qty": round(v["qty"], 1), "loc": v["loc"]}
+        if qt["location_id"]:
+            agg[name]["locs"].add(qt["location_id"][1].split("/")[-1])
+    return [{"name": n, "qty": round(v["qty"], 1), "loc": " · ".join(sorted(v["locs"]))}
             for n, v in sorted(agg.items(), key=lambda x: -x[1]["qty"])[:60]]
 
 

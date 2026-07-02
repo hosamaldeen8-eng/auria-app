@@ -415,6 +415,14 @@ def production_screen():
                     st.rerun()
 
         st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
+        # ── Filters ──
+        MO_STATES = {"all": "الكل", "progress": "🟡 جاري", "confirmed": "🟢 مؤكد",
+                     "done": "⚪ منتهي", "draft": "◻️ مسودة", "to_close": "🔵 للإغلاق"}
+        fc1, fc2 = st.columns([2, 3])
+        state_f = fc1.selectbox("الحالة", list(MO_STATES.keys()),
+                                format_func=lambda k: MO_STATES[k], key="mo_state_f")
+        query_f = fc2.text_input("بحث", key="mo_query_f", placeholder="منتج أو رقم الأمر")
+
         running_map = oc.get_running_map(uid, pwd)
         STATE_CHIP = {
             "progress":  ("جاري",    "#D4A853", "rgba(212,168,83,.15)"),
@@ -423,7 +431,7 @@ def production_screen():
             "done":      ("منتهي",   "#9BA58F", "rgba(155,165,143,.12)"),
             "draft":     ("مسودة",   "#888",    "rgba(255,255,255,.08)"),
         }
-        for mo in oc.get_mos(uid, pwd):
+        for mo in oc.get_mos(uid, pwd, state_f, query_f):
             label, s_col, s_bg = STATE_CHIP.get(mo["state"], (mo["state"], "#888", "rgba(255,255,255,.08)"))
             worker = running_map.get(mo["id"])
             worker_box = (f"<span style='background:rgba(127,176,105,.15);color:#7FB069;"
@@ -485,8 +493,13 @@ def production_screen():
 
     # ── Tab 3: Inventory ──
     with tab3:
-        q = st.text_input(t("search"), key="inv_search")
-        for item in oc.get_inventory(uid, pwd, q):
+        lc1, lc2 = st.columns([2, 3])
+        locs = oc.get_stock_locations(uid, pwd)
+        loc_f = lc1.selectbox("الموقع", ["all"] + locs,
+                              format_func=lambda x: "كل المواقع" if x == "all" else x.split("/")[-1],
+                              key="inv_loc_f")
+        q = lc2.text_input(t("search"), key="inv_search")
+        for item in oc.get_inventory(uid, pwd, q, loc_f):
             color = "#A32D2D" if item["qty"] == 0 else "#D4A853"
             st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span><b>{item['name']}</b><br><span style='color:#888;font-size:11px'>{item['loc']}</span></span><span style='font-size:18px;font-weight:700;color:{color}'>{item['qty']:g}</span></div>", unsafe_allow_html=True)
 
