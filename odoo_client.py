@@ -283,10 +283,25 @@ def get_stock_locations(uid, pwd):
     return names
 
 
-def get_inventory(uid, pwd, query="", location="all"):
+def get_product_categories(uid, pwd):
+    """Product categories that hold stock, short display names."""
+    cats = odoo(uid, pwd, "product.category", "search_read", [[]],
+        {"fields": ["id", "complete_name"]})
+    out = []
+    for c in cats:
+        name = c["complete_name"]
+        if name == "All":
+            continue
+        out.append({"id": c["id"], "name": name.replace("All / ", "")})
+    return sorted(out, key=lambda x: x["name"])
+
+
+def get_inventory(uid, pwd, query="", location="all", category="all"):
     domain = [["location_id.usage", "=", "internal"], ["quantity", ">", 0]]
     if location != "all":
         domain.append(["location_id.complete_name", "=", location])
+    if category != "all":
+        domain.append(["product_categ_id", "child_of", category])
     quants = odoo(uid, pwd, "stock.quant", "search_read", [domain],
         {"fields": ["product_id", "quantity", "location_id"], "limit": 300})
     agg = defaultdict(lambda: {"qty": 0, "locs": set()})

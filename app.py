@@ -420,7 +420,8 @@ def production_screen():
                      "done": "⚪ منتهي", "draft": "◻️ مسودة", "to_close": "🔵 للإغلاق"}
         fc1, fc2 = st.columns([2, 3])
         state_f = fc1.selectbox("الحالة", list(MO_STATES.keys()),
-                                format_func=lambda k: MO_STATES[k], key="mo_state_f")
+                                format_func=lambda k: MO_STATES[k],
+                                index=1, key="mo_state_f")  # default: جاري
         query_f = fc2.text_input("بحث", key="mo_query_f", placeholder="منتج أو رقم الأمر")
 
         running_map = oc.get_running_map(uid, pwd)
@@ -493,13 +494,19 @@ def production_screen():
 
     # ── Tab 3: Inventory ──
     with tab3:
-        lc1, lc2 = st.columns([2, 3])
+        # Product type: category IDs in Odoo (Raw=9 incl. Herbs/Oils, RTF=7, FG=2, PKG=6)
+        PROD_TYPES = {"all": "كل الأنواع", 9: "🌿 RAW خام", 7: "⚗️ RTF نصف مصنع",
+                      2: "📦 FG منتج نهائي", 6: "🎁 PKG تغليف"}
         locs = oc.get_stock_locations(uid, pwd)
-        loc_f = lc1.selectbox("الموقع", ["all"] + locs,
+        default_loc = next((i + 1 for i, l in enumerate(locs) if "SJ" in l and "RM-Storage" in l), 0)
+        lc1, lc2 = st.columns(2)
+        type_f = lc1.selectbox("النوع", list(PROD_TYPES.keys()),
+                               format_func=lambda k: PROD_TYPES[k], key="inv_type_f")
+        loc_f = lc2.selectbox("الموقع", ["all"] + locs,
                               format_func=lambda x: "كل المواقع" if x == "all" else x.split("/")[-1],
-                              key="inv_loc_f")
-        q = lc2.text_input(t("search"), key="inv_search")
-        for item in oc.get_inventory(uid, pwd, q, loc_f):
+                              index=default_loc, key="inv_loc_f")  # default: SJ/RM-Storage
+        q = st.text_input(t("search"), key="inv_search")
+        for item in oc.get_inventory(uid, pwd, q, loc_f, type_f):
             color = "#A32D2D" if item["qty"] == 0 else "#D4A853"
             st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span><b>{item['name']}</b><br><span style='color:#888;font-size:11px'>{item['loc']}</span></span><span style='font-size:18px;font-weight:700;color:{color}'>{item['qty']:g}</span></div>", unsafe_allow_html=True)
 
