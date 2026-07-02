@@ -387,7 +387,7 @@ def production_screen():
     if not hasattr(oc, "get_manufacturable_products"):
         st.error("⚠️ App updating — please reboot from 'Manage app' → Reboot, or wait a moment and refresh.")
         st.stop()
-    tab1, tab2, tab3 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}"])
+    tab1, tab2, tab3, tab4 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}", "🔄 تحويلات"])
 
     # ── Tab 1: MOs + create from BOM dropdown ──
     with tab1:
@@ -510,6 +510,53 @@ def production_screen():
             color = "#A32D2D" if item["qty"] == 0 else "#D4A853"
             st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span><b>{item['name']}</b><br><span style='color:#888;font-size:11px'>{item['loc']}</span></span><span style='font-size:18px;font-weight:700;color:{color}'>{item['qty']:g}</span></div>", unsafe_allow_html=True)
 
+
+    # ── Tab 4: Transfers ──
+    with tab4:
+        st.markdown("**📥 استلام المشتريات** <span style='opacity:.5;font-size:11px'>(مورد ← الاستلام)</span>", unsafe_allow_html=True)
+        receipts = oc.get_pending_receipts(uid, pwd)
+        if not receipts:
+            st.caption("لا توجد استلامات معلقة")
+        for r in receipts:
+            lines_txt = " · ".join(f"{l['name'][:22]} ×{l['qty']:g}" for l in r["lines"][:3])
+            card = (
+                "<div class='task-row' style='margin-bottom:4px'>"
+                "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{r['name']}</span>"
+                f"<span style='background:rgba(255,255,255,.07);padding:3px 10px;border-radius:8px;font-size:11px'>📅 {r['date']}</span>"
+                "</div>"
+                f"<div style='font-weight:700;margin:8px 0 5px'>{r['supplier']}</div>"
+                f"<div style='font-size:11px;opacity:.7'>{r['po']} — {lines_txt}</div>"
+                "</div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
+            if st.button("📥 استلام كامل", key=f"rcv_{r['id']}", use_container_width=True):
+                ok, msg = oc.validate_picking(uid, pwd, r["id"])
+                st.success(msg) if ok else st.error(msg)
+                if ok: st.rerun()
+            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+
+        st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
+        st.markdown("**🔄 تحويل داخلي**")
+        route_key = st.selectbox("المسار",
+            list(oc.TRANSFER_ROUTES.keys()),
+            format_func=lambda k: oc.TRANSFER_ROUTES[k]["label"],
+            key="tr_route")
+        route = oc.TRANSFER_ROUTES[route_key]
+        avail = oc.get_products_at_location(uid, pwd, route["src"])
+        if not avail:
+            st.info("لا يوجد مخزون في موقع المصدر")
+        else:
+            pnames = [f"{p['name']} (متاح {p['available']:g})" for p in avail]
+            pi = st.selectbox("المنتج", range(len(pnames)),
+                              format_func=lambda i: pnames[i], key="tr_prod")
+            chosen = avail[pi]
+            qty = st.number_input("الكمية", min_value=0.01,
+                                  max_value=float(chosen["available"]),
+                                  value=float(chosen["available"]), key="tr_qty")
+            if st.button("🔄 نفّذ التحويل", type="primary", use_container_width=True, key="tr_go"):
+                ok, msg = oc.create_transfer(uid, pwd, route_key, chosen["id"], qty)
+                st.success(msg) if ok else st.error(msg)
 
 # ── PROCUREMENT ──────────────────────────────────────────────
 def procurement_screen():

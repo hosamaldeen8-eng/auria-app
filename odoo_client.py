@@ -35,7 +35,7 @@ def _reset_models():
 USER_DEPT = {
     18: {"dept": "production",  "name": "عبدالله",    "color": "#2E3D2E"},
     29: {"dept": "procurement", "name": "علاء الديب", "color": "#633806"},
-    9:  {"dept": "procurement", "name": "علاء وشاح",  "color": "#7A4410"},
+    9:  {"dept": "cs",          "name": "ألاء وشاح",  "color": "#8B2020"},
     27: {"dept": "procurement", "name": "خان",        "color": "#8B5E3C"},
     15: {"dept": "operations",  "name": "مروان",      "color": "#1A5276"},
     13: {"dept": "operations",  "name": "ناصر",       "color": "#2C6E3B"},
@@ -46,6 +46,7 @@ USER_DEPT = {
     10: {"dept": "cs",          "name": "زنجابيل",    "color": "#6B1818"},
     8:  {"dept": "management",  "name": "حسام",       "color": "#2E3D2E"},
     23: {"dept": "management",  "name": "بدر",        "color": "#4A5D48"},
+    30: {"dept": "management",  "name": "وجدان",      "color": "#2E3D2E"},
 }
 
 DEPT_PROJECT = {
@@ -459,6 +460,104 @@ def get_mo_detail(uid, pwd, mo_id):
         "total_elapsed_min": round(total_elapsed, 1),
         "any_running": any(w["working"] for w in workorders),
     }
+
+
+# ── TRANSFERS (Buy receipts + internal moves) ────────────────
+# Odoo picking types (verified live):
+#   64 Buy Raw:        Partners/Vendors(4) → SJ/RM-Receiving(36)
+#   51 RM Storage:     SJ/RM-Receiving(36) → SJ/RM-Storage(37)
+#   66 PKG Storage:    SJ/RM-Receiving(36) → SJ/PKG-Storage(38)
+#   57 FG SJ→HD:       SJ/FG-Storage(55)   → HD/FG-Storage(45)
+TRANSFER_ROUTES = {
+    "putaway_rm":  {"label": "استلام → مخزن المواد الخام", "type_id": 51, "src": 36, "dest": 37},
+    "putaway_pkg": {"label": "استلام → مخزن التغليف",      "type_id": 66, "src": 36, "dest": 38},
+    "fg_to_hd":    {"label": "منتج نهائي: سراج ← حي دمشق", "type_id": 57, "src": 55, "dest": 45},
+}
+
+
+def get_pending_receipts(uid, pwd):
+    """Incoming purchase receipts waiting to be received (Partner → RM-Receiving)."""
+    picks = odoo(uid, pwd, "stock.picking", "search_read",
+        [[["picking_type_id.code", "=", "incoming"],
+          ["state", "in", ["assigned", "confirmed"]]]],
+        {"fields": ["id", "name", "partner_id", "origin", "state", "scheduled_date"],
+         "limit": 20, "order": "scheduled_date"})
+    out = []
+    for p in picks:
+        moves = odoo(uid, pwd, "stock.move", "search_read",
+            [[["picking_id", "=", p["id"]], ["state", "not in", ["done", "cancel"]]]],
+            {"fields": ["product_id", "product_uom_qty"]})
+        out.append({
+            "id": p["id"], "name": p["name"],
+            "supplier": p["partner_id"][1] if p["partner_id"] else "—",
+            "po": p.get("origin") or "—",
+            "date": (p.get("scheduled_date") or "")[:10],
+            "lines": [{"name": m["product_id"][1], "qty": m["product_uom_qty"]} for m in moves],
+        })
+    return out
+
+
+def validate_picking(uid, pwd, picking_id):
+    """Receive/validate a transfer in full. Returns (ok, message)."""
+    try:
+        moves = odoo(uid, pwd, "stock.move", "search_read",
+            [[["picking_id", "=", picking_id], ["state", "not in", ["done", "cancel"]]]],
+            {"fields": ["id", "product_uom_qty"]})
+        for m in moves:  # full quantities → no backorder wizard
+            odoo(uid, pwd, "stock.move", "write",
+                 [[m["id"]], {"quantity": m["product_uom_qty"], "picked": True}])
+        odoo(uid, pwd, "stock.picking", "button_validate", [[picking_id]])
+        return True, "تم الاستلام ✓"
+    except Exception as e:
+        if "cannot marshal None" in str(e):
+            return True, "تم الاستلام ✓"
+        return False, _clean_odoo_error(e)
+
+
+def get_products_at_location(uid, pwd, loc_id):
+    """Products with stock at a location — for the transfer picker."""
+    quants = odoo(uid, pwd, "stock.quant", "search_read",
+        [[["location_id", "=", loc_id], ["quantity", ">", 0]]],
+        {"fields": ["product_id", "quantity"], "limit": 200})
+    agg = defaultdict(float)
+    pid_map = {}
+    for q in quants:
+        agg[q["product_id"][1]] += q["quantity"]
+        pid_map[q["product_id"][1]] = q["product_id"][0]
+    return [{"id": pid_map[n], "name": n, "available": round(v, 2)}
+            for n, v in sorted(agg.items(), key=lambda x: -x[1])]
+
+
+def create_transfer(uid, pwd, route_key, product_id, qty):
+    """Create + validate an internal transfer on a preset route.
+    Returns (ok, message)."""
+    r = TRANSFER_ROUTES[route_key]
+    try:
+        pick_id = odoo(uid, pwd, "stock.picking", "create", [{
+            "picking_type_id": r["type_id"],
+            "location_id": r["src"],
+            "location_dest_id": r["dest"],
+        }])
+        odoo(uid, pwd, "stock.move", "create", [{
+            "picking_id": pick_id,
+            "product_id": product_id,
+            "product_uom_qty": qty,
+            "location_id": r["src"],
+            "location_dest_id": r["dest"],
+            "name": "transfer",
+        }])
+        try:
+            odoo(uid, pwd, "stock.picking", "action_confirm", [[pick_id]])
+        except Exception as e:
+            if "cannot marshal None" not in str(e):
+                raise
+        ok, msg = validate_picking(uid, pwd, pick_id)
+        if ok:
+            name = odoo(uid, pwd, "stock.picking", "read", [[pick_id]], {"fields": ["name"]})
+            return True, f"تم التحويل ✓ ({name[0]['name']})"
+        return ok, msg
+    except Exception as e:
+        return False, _clean_odoo_error(e)
 
 
 def get_running_map(uid, pwd):
