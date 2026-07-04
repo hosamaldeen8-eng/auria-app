@@ -579,6 +579,23 @@ def get_running_map(uid, pwd):
     return out
 
 
+def mo_start_work(uid, pwd, mo_id):
+    """Start the timer on the first startable stage of the MO."""
+    wos = odoo(uid, pwd, "mrp.workorder", "search_read",
+        [[["production_id", "=", mo_id], ["state", "in", ["ready", "progress", "waiting", "pending"]]]],
+        {"fields": ["id", "name"], "order": "id"})
+    for w in wos:
+        open_log = odoo(uid, pwd, "mrp.workcenter.productivity", "search_count",
+            [[["workorder_id", "=", w["id"]], ["date_end", "=", False]]])
+        if open_log:
+            continue  # already running
+        ok, msg = wo_start(uid, pwd, w["id"])
+        if ok:
+            return True, f"بدأ المؤقّت: {w['name']}"
+        return ok, msg
+    return False, "كل المراحل تعمل بالفعل أو منتهية"
+
+
 def mo_validate(uid, pwd, mo_id):
     """Mark the whole MO done. Returns (ok, message)."""
     try:
@@ -658,6 +675,8 @@ def _clean_odoo_error(e):
     msg = str(e)
     if 'type "view"' in msg or "view (SJ)" in msg or "view (HD)" in msg:
         return "خطأ في إعداد المخازن: الموقع المصدر نوعه 'view' — يحتاج مود ضبط مسارات المخزن."
+    if "already done or cancelled" in msg:
+        return "أمر الشغل منتهي أو ملغي — لا يمكن بدء المؤقّت."
     if "reserved" in msg.lower() or "reservation" in msg.lower():
         return "المكوّنات غير محجوزة بعد — تحقّق من توفر المواد."
     if "UserError" in msg:

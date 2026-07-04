@@ -325,7 +325,12 @@ def mo_detail_screen():
     </div>""", unsafe_allow_html=True)
 
     # ── MO actions ──
-    c1, c2 = st.columns(2)
+    c0, c1, c2 = st.columns(3)
+    with c0:
+        if mo["state"] in ("confirmed", "progress") and not mo["any_running"] and st.button("▶️ بدء العمل", use_container_width=True, type="primary"):
+            ok, msg = oc.mo_start_work(uid, pwd, mo_id)
+            st.success(msg) if ok else st.error(msg)
+            if ok: st.rerun()
     with c1:
         if mo["state"] == "draft" and st.button("🟢 تأكيد الأمر", use_container_width=True):
             ok, msg = oc.mo_confirm(uid, pwd, mo_id)
