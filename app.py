@@ -106,6 +106,7 @@ ss.setdefault("screen", "home")
 ss.setdefault("mo_open", None)
 ss.setdefault("op_pick_open", None)
 ss.setdefault("po_open", None)
+ss.setdefault("so_open", None)
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -883,6 +884,123 @@ def operations_screen():
             st.markdown(card, unsafe_allow_html=True)
 
 
+def sales_screen():
+    uid, pwd = ss.uid, ss.pwd
+    if ss.get("so_open"):
+        _so_detail(uid, pwd, ss.so_open)
+        return
+
+    st.markdown("**طلبات البيع**")
+    f1, f2 = st.columns([2, 3])
+    so_state = f1.selectbox("الحالة", ["sale", "draft", "sent", "all", "cancel"],
+        format_func=lambda k: {"sale": "مؤكد", "draft": "مسودة", "sent": "عرض سعر",
+                               "all": "الكل", "cancel": "ملغي"}[k], key="so_state_f")
+    so_q = f2.text_input(t("search"), key="so_q", placeholder="رقم أو عميل")
+    sos = oc.get_sales_orders(uid, pwd, so_state, so_q)
+    st.caption(f"{len(sos)} طلب")
+
+    for s in sos:
+        meta = oc.SO_STATE.get(s["state"], {"ar": s["state"], "color": "#9BA58F", "bg": "rgba(255,255,255,.07)"})
+        # Shipment indicator
+        if s["ship_count"] == 0 and s["state"] == "sale":
+            ship_chip = "<span style='background:rgba(212,168,83,.14);color:#D4A853;padding:3px 9px;border-radius:8px;font-size:10px'>⚠️ لم تُرسل ليمامة</span>"
+        elif s["has_tracking"]:
+            ship_chip = f"<span style='background:rgba(127,176,105,.14);color:#7FB069;padding:3px 9px;border-radius:8px;font-size:10px'>🚚 {s['ship_status'][:18]}</span>"
+        elif s["ship_count"] > 0:
+            ship_chip = "<span style='background:rgba(224,112,112,.12);color:#E07070;padding:3px 9px;border-radius:8px;font-size:10px'>⚠️ خطأ شحنة</span>"
+        else:
+            ship_chip = ""
+        card = (
+            "<div class='task-row' style='margin-bottom:4px'>"
+            "<div style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{s['name']}</span>"
+            f"<span style='background:{meta['bg']};color:{meta['color']};padding:3px 11px;border-radius:20px;font-size:11px;font-weight:600'>{meta['ar']}</span>"
+            "</div>"
+            f"<div style='font-size:15px;font-weight:700;margin:9px 0 6px'>{s['customer']}</div>"
+            "<div style='display:flex;gap:6px;flex-wrap:wrap;align-items:center'>"
+            f"<span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>💰 {s['total']:,.0f}</span>"
+            f"<span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>📅 {s['date']}</span>"
+            f"{ship_chip}</div></div>"
+        )
+        st.markdown(card, unsafe_allow_html=True)
+        if st.button("فتح الطلب ←", key=f"so_{s['id']}", use_container_width=True):
+            ss.so_open = s["id"]; st.rerun()
+        st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
+
+
+def _so_detail(uid, pwd, so_id):
+    if st.button("← طلبات البيع"):
+        ss.so_open = None; st.rerun()
+    d = oc.get_so_detail(uid, pwd, so_id)
+    if not d:
+        st.error("غير موجود"); return
+    meta = oc.SO_STATE.get(d["state"], {"ar": d["state"]})
+    st.markdown(f"""<div class='greeting'>
+        <div style='display:flex;justify-content:space-between;align-items:start'>
+          <div>
+            <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['name']}</div>
+            <div style='font-size:18px;font-weight:700'>{d['customer']}</div>
+            <div style='font-size:12px;opacity:.7;margin-top:2px'>{meta['ar']} · {d['date']}</div>
+          </div>
+          <div style='text-align:center;background:rgba(255,255,255,.08);border-radius:10px;padding:8px 14px'>
+            <div style='font-size:18px;font-weight:700;color:#D4A853'>{d['total']:,.0f}</div>
+            <div style='font-size:9px;opacity:.6'>د.ل</div>
+          </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    if d["state"] in ("draft", "sent"):
+        if st.button("🟢 تأكيد الطلب", use_container_width=True, type="primary"):
+            ok, msg = oc.so_confirm(uid, pwd, so_id)
+            st.success(msg) if ok else st.error(msg)
+            if ok: st.rerun()
+
+    # ── Shipment / Accurate API status + guidance ──
+    st.markdown("**حالة الشحن (يمامة)**")
+    sh = d["shipment"]
+    if not sh:
+        st.info("لم تُنشأ شحنة لهذا الطلب بعد.")
+    elif sh["stage"] == "ok":
+        track = f"<a href='{sh['tracking_url']}' target='_blank' style='color:#7FB069'>🔗 تتبّع {sh['code']}</a>" if sh["tracking_url"] else ""
+        st.markdown(f"<div class='task-row'><div style='color:#7FB069;font-weight:700'>✅ {sh['label']}</div><div style='margin-top:6px'>{track}</div></div>", unsafe_allow_html=True)
+    elif sh["stage"] == "error" and sh["guidance"]:
+        g = sh["guidance"]
+        steps_html = "".join(f"<div style='font-size:12px;margin:3px 0'>• {s}</div>" for s in g["steps"])
+        st.markdown(f"""<div class='task-row' style='border-color:#E07070'>
+            <div style='color:#E07070;font-weight:700;margin-bottom:6px'>⚠️ {g['title']}</div>
+            {steps_html}
+        </div>""", unsafe_allow_html=True)
+        # Guided fix per error type
+        if g["fix_type"] == "mobile":
+            new_mob = st.text_input("رقم الجوال الصحيح", value=sh["mobile"], key=f"fix_mob_{sh['id']}",
+                                    placeholder="+218 9X XXXXXXX")
+            c1, c2 = st.columns(2)
+            if c1.button("💾 حفظ الرقم", key=f"savemob_{sh['id']}", use_container_width=True):
+                ok, msg = oc.fix_shipment_mobile(uid, pwd, sh["id"], new_mob)
+                st.success(msg) if ok else st.error(msg)
+            if c2.button("🔄 أعد الإرسال", key=f"resend_{sh['id']}", use_container_width=True, type="primary"):
+                ok, msg = oc.resend_shipment(uid, pwd, sh["id"])
+                st.success(msg) if ok else st.error(msg)
+                if ok: st.rerun()
+        elif g["fix_type"] == "retry":
+            if st.button("🔄 أعد المحاولة", key=f"retry_{sh['id']}", use_container_width=True, type="primary"):
+                ok, msg = oc.resend_shipment(uid, pwd, sh["id"])
+                st.success(msg) if ok else st.error(msg)
+                if ok: st.rerun()
+        elif g["fix_type"] == "subzone":
+            st.caption("عدّل المنطقة الفرعية في أودو ثم أعد الإرسال")
+            if st.button("🔄 أعد الإرسال", key=f"resendsz_{sh['id']}", use_container_width=True, type="primary"):
+                ok, msg = oc.resend_shipment(uid, pwd, sh["id"])
+                st.success(msg) if ok else st.error(msg)
+                if ok: st.rerun()
+    else:
+        st.markdown(f"<div class='task-row'><span style='color:{sh['color']}'>{sh['label']}</span></div>", unsafe_allow_html=True)
+
+    st.markdown("**المنتجات**")
+    for l in d["lines"]:
+        st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span>{l['name']} <span style='opacity:.5;font-size:11px'>×{l['qty']:g}</span></span><span style='color:#D4A853'>{l['subtotal']:,.0f}</span></div>", unsafe_allow_html=True)
+
+
 def _op_picking_detail(uid, pwd, picking_id):
     if st.button("← رجوع"):
         ss.op_pick_open = None; st.rerun()
@@ -1078,4 +1196,5 @@ else:
     elif screen == "cs":         cs_screen()
     elif screen == "tasks":      tasks_screen()
     elif screen == "report":     report_screen()
+    elif screen == "sales":      sales_screen()
     elif screen == "profile":    profile_screen()

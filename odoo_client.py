@@ -979,6 +979,166 @@ def get_deliveries(uid, pwd):
     } for p in picks]
 
 
+# ── SALES ORDERS + ACCURATE API ──────────────────────────────
+SO_STATE = {
+    "draft": {"ar": "مسودة", "color": "#9BA58F", "bg": "rgba(255,255,255,.08)"},
+    "sent":  {"ar": "عرض سعر", "color": "#D4A853", "bg": "rgba(212,168,83,.14)"},
+    "sale":  {"ar": "مؤكد", "color": "#7FB069", "bg": "rgba(127,176,105,.15)"},
+    "done":  {"ar": "مُغلق", "color": "#9BA58F", "bg": "rgba(255,255,255,.06)"},
+    "cancel":{"ar": "ملغي", "color": "#E07070", "bg": "rgba(224,112,112,.12)"},
+}
+
+# Shipment lifecycle from the SO's point of view — drives the guidance UI
+def _shipment_stage(state, api_status):
+    if not state:
+        return ("none", "لم تُرسل ليمامة بعد", "#9BA58F")
+    if state == "error":
+        return ("error", "خطأ من واجهة يمامة — يحتاج إصلاح", "#E07070")
+    if state == "draft":
+        return ("draft", "مسودة شحنة — لم تُرسل", "#D4A853")
+    if state in ("sent", "delivered", "returned"):
+        return ("ok", api_status or "تم الإرسال", "#7FB069")
+    return (state, api_status or state, "#9BA58F")
+
+
+def _diagnose_accurate_error(msg):
+    """Turn an Accurate API error into a guided fix. Returns (title, steps, fix_type)."""
+    m = (msg or "").lower()
+    if "recipient mobile" in m or "رقم الهاتف" in m or ("mobile" in m and "missing" in m):
+        return ("رقم الجوال غير صالح",
+                ["صيغة الرقم غير مقبولة لدى يمامة.",
+                 "يجب أن يكون بصيغة دولية: ‎+218 9X XXXXXXX‎",
+                 "صحّح رقم جوال المستلم أدناه ثم أعد الإرسال."],
+                "mobile")
+    if "sub-zone" in m or "price list" in m or "المنطقة" in m:
+        return ("المنطقة الفرعية غير مغطّاة",
+                ["المنطقة الفرعية المختارة ليست ضمن قائمة أسعار يمامة.",
+                 "اختر منطقة فرعية أخرى مغطّاة، أو راجع يمامة.",
+                 "عدّل المنطقة الفرعية أدناه ثم أعد الإرسال."],
+                "subzone")
+    if "cannot reach" in m or "internet" in m or "connection" in m or "تعذر" in m:
+        return ("تعذّر الاتصال بخادم يمامة",
+                ["مشكلة مؤقتة في الاتصال — لا يوجد خطأ في البيانات.",
+                 "تحقّق من الإنترنت وأعد المحاولة."],
+                "retry")
+    return ("خطأ من واجهة يمامة",
+            [msg or "خطأ غير معروف — راجع التفاصيل في أودو."],
+            "generic")
+
+
+def get_sales_orders(uid, pwd, state="sale", query=""):
+    domain = []
+    if state != "all":
+        domain.append(["state", "=", state])
+    if query:
+        domain += ["|", ["name", "ilike", query], ["partner_id.name", "ilike", query]]
+    sos = odoo(uid, pwd, "sale.order", "search_read", [domain],
+        {"fields": ["id", "name", "partner_id", "state", "amount_total",
+                    "date_order", "accurate_shipment_count", "accurate_status_name",
+                    "accurate_tracking_url"],
+         "limit": 40, "order": "date_order desc"})
+    out = []
+    for s in sos:
+        out.append({
+            "id": s["id"], "name": s["name"],
+            "customer": s["partner_id"][1] if s.get("partner_id") else "—",
+            "state": s["state"], "total": s["amount_total"],
+            "date": (s.get("date_order") or "")[:10],
+            "ship_count": s.get("accurate_shipment_count", 0),
+            "ship_status": s.get("accurate_status_name") or "",
+            "has_tracking": bool(s.get("accurate_tracking_url")),
+        })
+    return out
+
+
+def get_so_detail(uid, pwd, so_id):
+    s = odoo(uid, pwd, "sale.order", "read", [[so_id]],
+        {"fields": ["name", "partner_id", "state", "amount_total", "amount_untaxed",
+                    "date_order", "order_line", "accurate_shipment_ids",
+                    "accurate_tracking_url", "accurate_status_name"]})
+    if not s:
+        return None
+    s = s[0]
+    lines = []
+    if s.get("order_line"):
+        recs = odoo(uid, pwd, "sale.order.line", "read", [s["order_line"]],
+            {"fields": ["product_id", "product_uom_qty", "price_unit", "price_subtotal"]})
+        for l in recs:
+            if l.get("product_id"):
+                lines.append({"name": l["product_id"][1], "qty": l["product_uom_qty"],
+                              "price": l["price_unit"], "subtotal": l["price_subtotal"]})
+    # Shipment state + guidance
+    shipment = None
+    if s.get("accurate_shipment_ids"):
+        sh = odoo(uid, pwd, "accurate.shipment", "read", [s["accurate_shipment_ids"]],
+            {"fields": ["name", "code", "state", "api_status_name", "error_message",
+                        "tracking_url", "recipient_mobile", "recipient_zone_id",
+                        "recipient_subzone_id"]})
+        if sh:
+            latest = sh[-1]
+            stage, label, color = _shipment_stage(latest["state"], latest.get("api_status_name"))
+            guidance = None
+            if latest["state"] == "error":
+                title, steps, fix_type = _diagnose_accurate_error(latest.get("error_message"))
+                guidance = {"title": title, "steps": steps, "fix_type": fix_type,
+                            "raw": latest.get("error_message", "")}
+            shipment = {
+                "id": latest["id"], "name": latest["name"], "code": latest.get("code", ""),
+                "state": latest["state"], "stage": stage, "label": label, "color": color,
+                "tracking_url": latest.get("tracking_url", ""),
+                "mobile": latest.get("recipient_mobile", ""),
+                "guidance": guidance,
+            }
+    return {
+        "id": so_id, "name": s["name"],
+        "customer": s["partner_id"][1] if s.get("partner_id") else "—",
+        "state": s["state"], "total": s["amount_total"],
+        "date": (s.get("date_order") or "")[:16],
+        "lines": lines, "shipment": shipment,
+        "tracking_url": s.get("accurate_tracking_url", ""),
+    }
+
+
+def so_confirm(uid, pwd, so_id):
+    try:
+        odoo(uid, pwd, "sale.order", "action_confirm", [[so_id]])
+        return True, "تم تأكيد الطلب ✓"
+    except Exception as e:
+        if "cannot marshal None" in str(e):
+            return True, "تم تأكيد الطلب ✓"
+        return False, _clean_odoo_error(e)
+
+
+def fix_shipment_mobile(uid, pwd, shipment_id, new_mobile):
+    """Update recipient mobile on a failed shipment (guided fix)."""
+    try:
+        odoo(uid, pwd, "accurate.shipment", "write", [[shipment_id], {"recipient_mobile": new_mobile}])
+        return True, "تم تحديث الرقم — أعد الإرسال الآن"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def resend_shipment(uid, pwd, shipment_id):
+    """Retry sending a shipment to the Accurate API. Returns (ok, msg)."""
+    for method in ("action_send_shipment", "action_create_shipment", "send_shipment", "action_confirm"):
+        try:
+            odoo(uid, pwd, "accurate.shipment", method, [[shipment_id]])
+            sh = odoo(uid, pwd, "accurate.shipment", "read", [[shipment_id]],
+                {"fields": ["state", "error_message", "code"]})
+            if sh and sh[0]["state"] != "error":
+                return True, f"تم الإرسال ✓ ({sh[0].get('code') or ''})"
+            elif sh:
+                return False, sh[0].get("error_message", "ما زال هناك خطأ")[:120]
+        except Exception as e:
+            if "cannot marshal None" in str(e):
+                sh = odoo(uid, pwd, "accurate.shipment", "read", [[shipment_id]], {"fields": ["state", "code"]})
+                if sh and sh[0]["state"] != "error":
+                    return True, f"تم الإرسال ✓ ({sh[0].get('code') or ''})"
+                continue
+            continue
+    return False, "تعذّر الإرسال — جرّب من أودو"
+
+
 def get_orders(uid, pwd, query=""):
     domain = []
     if query:
