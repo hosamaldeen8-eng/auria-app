@@ -73,6 +73,13 @@ st.markdown("""
   .task-row a { color:#7FB069; }
   .badge { font-size:10px; padding:2px 8px; border-radius:20px; }
   [data-testid="stStatusWidget"] { visibility: hidden; }
+  div.st-key-topnav { position: sticky; top: 0; z-index: 999; background: rgba(20,27,20,.96);
+    backdrop-filter: blur(8px); padding: 6px 0 4px; border-bottom: 1px solid #2E3D2E; margin-bottom: 10px; }
+  div.st-key-topnav .stButton>button { background: transparent; border: none; color: #9BA58F;
+    font-size: 12px; padding: 7px 2px; border-radius: 9px; box-shadow: none; }
+  div.st-key-topnav .stButton>button:hover { color: #E8E4D6; background: rgba(255,255,255,.05); border: none; }
+  div.st-key-topnav .stButton>button[kind="primary"] { background: rgba(127,176,105,.14);
+    color: #7FB069; font-weight: 700; border: none; }
   .st-key-topnav .stButton>button{background:transparent;border:1px solid transparent;color:#9BA58F;font-size:11px;padding:7px 2px;border-radius:10px;line-height:1.3;min-height:54px;white-space:pre-line;font-weight:500;transition:all .15s}
   .st-key-topnav .stButton>button:hover{color:#E8E4D6;background:rgba(255,255,255,.05);border-color:transparent}
   .st-key-topnav .stButton>button[kind="primary"],
