@@ -40,7 +40,7 @@ T = {
            "log_note":"Log note","post":"Post","rfqs":"RFQs","approve":"Approve","suppliers":"Suppliers",
            "tickets":"Tickets","reply":"Reply","order_lookup":"Order Lookup","achievements":"Achievements",
            "challenges":"Challenges","tomorrow":"Tomorrow's Plan","submit":"Submit Report","invalid":"Invalid credentials",
-           "mark_done":"Mark done","all":"All","mine":"Mine","active":"Active","validate":"Validate"},
+           "mark_done":"Mark done","all":"All","mine":"Mine","active":"Active","validate":"Validate","profile":"Profile"},
     "ar": {"login":"تسجيل الدخول","email":"البريد الإلكتروني","password":"كلمة المرور","signin":"دخول",
            "home":"الرئيسية","tasks":"المهام","report":"التقرير اليومي","logout":"خروج",
            "good_morning":"مرحباً","dept_snapshot":"القسم","my_performance":"أدائي",
@@ -52,7 +52,7 @@ T = {
            "log_note":"ملاحظة","post":"إرسال","rfqs":"طلبات العروض","approve":"اعتماد","suppliers":"الموردون",
            "tickets":"التذاكر","reply":"رد","order_lookup":"بحث طلب","achievements":"الإنجازات",
            "challenges":"التحديات","tomorrow":"خطة الغد","submit":"إرسال التقرير","invalid":"بيانات غير صحيحة",
-           "mark_done":"إنهاء","all":"الكل","mine":"مهامي","active":"نشط","validate":"تأكيد"},
+           "mark_done":"إنهاء","all":"الكل","mine":"مهامي","active":"نشط","validate":"تأكيد","profile":"حسابي"},
 }
 
 DEPT_COLORS = {"production":"#2E3D2E","procurement":"#633806","operations":"#1A5276",
@@ -73,6 +73,10 @@ st.markdown("""
   .task-row a { color:#7FB069; }
   .badge { font-size:10px; padding:2px 8px; border-radius:20px; }
   [data-testid="stStatusWidget"] { visibility: hidden; }
+  .st-key-topnav .stButton>button{background:transparent;border:1px solid transparent;color:#9BA58F;font-size:11px;padding:7px 2px;border-radius:10px;line-height:1.3;min-height:54px;white-space:pre-line;font-weight:500;transition:all .15s}
+  .st-key-topnav .stButton>button:hover{color:#E8E4D6;background:rgba(255,255,255,.05);border-color:transparent}
+  .st-key-topnav .stButton>button[kind="primary"],
+  .st-key-topnav [data-testid="stBaseButton-primary"]{background:rgba(127,176,105,.14) !important;color:#7FB069 !important;border:1px solid rgba(127,176,105,.35) !important;font-weight:700}
   .auria-loader{position:fixed;inset:0;background:rgba(20,27,20,.78);display:none;align-items:center;justify-content:center;z-index:99999}
   body:has([data-testid="stStatusWidget"]) .auria-loader{display:flex}
   .auria-loader img{width:70px;height:70px;border-radius:50%;animation:apulse 1.1s ease-in-out infinite;box-shadow:0 0 34px rgba(127,176,105,.35)}
@@ -170,15 +174,11 @@ def login_screen():
 # ── HEADER ───────────────────────────────────────────────────
 def header():
     info = ss.info
-    c1, c2, c3 = st.columns([1, 4, 2])
+    c1, c2 = st.columns([1, 6])
     with c1:
-        st.markdown(f"<img src='data:image/png;base64,{EMBLEM_B64}' width='40' style='border-radius:50%'/>", unsafe_allow_html=True)
+        st.markdown(f"<img src='data:image/png;base64,{EMBLEM_B64}' width='42' style='border-radius:50%'/>", unsafe_allow_html=True)
     with c2:
-        st.markdown(f"**{info['name']}**  \n<span style='color:#888780;font-size:12px'>{t(info['dept'])}</span>", unsafe_allow_html=True)
-    with c3:
-        if st.button("🌐" + (" EN" if ss.lang == "ar" else " ع"), use_container_width=True):
-            ss.lang = "en" if ss.lang == "ar" else "ar"; st.rerun()
-    st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
+        st.markdown(f"<div style='padding-top:2px'><b style='font-size:15px'>{info['name']}</b><br><span style='color:#9BA58F;font-size:11px'>{t(info['dept'])} · {oc.today_str()}</span></div>", unsafe_allow_html=True)
 
 # ── NAV ──────────────────────────────────────────────────────
 def nav():
@@ -187,13 +187,20 @@ def nav():
     if dept in ("production","procurement","operations","creative","cs"):
         icons = {"production":"📦","procurement":"🛒","operations":"🚚","creative":"🎨","cs":"💬"}
         tabs.append((dept, icons[dept], t(dept)))
-    tabs += [("tasks", "✅", t("tasks")), ("report", "📝", t("report")), ("profile", "👤", "")]
+    tabs += [("tasks", "✅", t("tasks")), ("report", "📝", t("report")), ("profile", "👤", t("profile"))]
 
-    cols = st.columns(len(tabs))
-    for i, (key, icon, label) in enumerate(tabs):
-        with cols[i]:
-            if st.button(f"{icon}\n{label}", key=f"nav_{key}", use_container_width=True):
-                ss.screen = key; st.rerun()
+    with st.container(key="topnav"):
+        cols = st.columns(len(tabs))
+        for i, (key, icon, label) in enumerate(tabs):
+            active = ss.screen == key
+            with cols[i]:
+                if st.button(f"{icon}\n{label}", key=f"nav_{key}", use_container_width=True,
+                             type="primary" if active else "secondary"):
+                    if key == "production":
+                        ss.mo_open = None  # tapping the tab returns to the list
+                    ss.screen = key
+                    st.rerun()
+    st.markdown("<div style='border-bottom:1px solid #2E3D2E;margin:0 0 14px'></div>", unsafe_allow_html=True)
 
 # ── HOME ─────────────────────────────────────────────────────
 def home_screen():
@@ -738,6 +745,7 @@ if not ss.uid:
     login_screen()
 else:
     header()
+    nav()
     screen = ss.screen
     if screen == "home":         home_screen()
     elif screen == "production":
@@ -749,5 +757,3 @@ else:
     elif screen == "tasks":      tasks_screen()
     elif screen == "report":     report_screen()
     elif screen == "profile":    profile_screen()
-    st.markdown("<hr style='margin:16px 0 8px'>", unsafe_allow_html=True)
-    nav()
