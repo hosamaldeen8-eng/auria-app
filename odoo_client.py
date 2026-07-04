@@ -739,6 +739,84 @@ def approve_rfq(uid, pwd, po_id):
 
 
 # ── OPERATIONS ───────────────────────────────────────────────
+# ── OPERATIONS: two-stage delivery flow ──────────────────────
+# Stage 1: Pick From FG to Alyamama (type 3, internal) — ready/waiting to send
+# Stage 2: Delivery by Alyamam (type 41, outgoing) → Yamamah API tracks it
+def get_fg_to_yamamah(uid, pwd, state="ready", query=""):
+    """Stage 1 pickings: FG → Alyamama warehouse. Default ready+waiting."""
+    domain = [["picking_type_id", "=", 3]]
+    if state == "ready":
+        domain.append(["state", "in", ["assigned", "confirmed", "waiting"]])
+    elif state != "all":
+        domain.append(["state", "=", state])
+    if query:
+        domain += ["|", ["name", "ilike", query], ["origin", "ilike", query]]
+    picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
+        {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
+         "limit": 60, "order": "scheduled_date asc"})  # oldest first
+    return [{
+        "id": p["id"], "name": p["name"], "state": p["state"],
+        "order": p.get("origin") or "—",
+        "customer": p["partner_id"][1] if p.get("partner_id") else "—",
+        "date": (p.get("scheduled_date") or "")[:10],
+    } for p in picks]
+
+
+def get_picking_detail(uid, pwd, picking_id):
+    """Full detail of a delivery picking for the Operations validate view."""
+    p = odoo(uid, pwd, "stock.picking", "read", [[picking_id]],
+        {"fields": ["name", "state", "origin", "partner_id", "scheduled_date", "move_ids_without_package"]})
+    if not p:
+        return None
+    p = p[0]
+    moves = odoo(uid, pwd, "stock.move", "search_read",
+        [[["picking_id", "=", picking_id]]],
+        {"fields": ["product_id", "product_uom_qty", "quantity", "state"]})
+    # Customer + order context
+    partner = None
+    if p.get("partner_id"):
+        pr = odoo(uid, pwd, "res.partner", "read", [[p["partner_id"][0]]],
+            {"fields": ["name", "phone", "mobile", "street", "city"]})
+        partner = pr[0] if pr else None
+    return {
+        "id": picking_id, "name": p["name"], "state": p["state"],
+        "order": p.get("origin") or "—",
+        "date": (p.get("scheduled_date") or "")[:16],
+        "customer": partner["name"] if partner else "—",
+        "phone": (partner.get("mobile") or partner.get("phone") or "—") if partner else "—",
+        "address": ", ".join(x for x in [partner.get("street"), partner.get("city")] if x) if partner else "—",
+        "lines": [{"name": m["product_id"][1], "qty": m["product_uom_qty"],
+                   "done": m.get("quantity", 0), "state": m["state"]} for m in moves],
+    }
+
+
+def get_yamamah_to_customer(uid, pwd, state="all", query=""):
+    """Stage 2: shipments handed to Yamamah, tracked via Accurate API.
+    Oldest first, shows live API status."""
+    domain = []
+    if state != "all":
+        domain.append(["state", "=", state])
+    if query:
+        domain += ["|", "|", ["name", "ilike", query],
+                   ["recipient_name", "ilike", query], ["sale_id.name", "ilike", query]]
+    ships = odoo(uid, pwd, "accurate.shipment", "search_read", [domain],
+        {"fields": ["id", "name", "code", "state", "api_status_name", "tracking_url",
+                    "sale_id", "recipient_name", "recipient_mobile", "recipient_zone_id",
+                    "fee_collection", "date"],
+         "limit": 60, "order": "date asc"})  # oldest first
+    return [{
+        "id": s["id"], "name": s["name"], "code": s.get("code", ""),
+        "state": s["state"], "api_status": s.get("api_status_name") or "—",
+        "tracking_url": s.get("tracking_url", ""),
+        "order": s["sale_id"][1] if s.get("sale_id") else "—",
+        "recipient": s.get("recipient_name", "—"),
+        "mobile": s.get("recipient_mobile", ""),
+        "zone": s["recipient_zone_id"][1] if s.get("recipient_zone_id") else "—",
+        "cod": s.get("fee_collection", 0),
+        "date": (s.get("date") or "")[:16],
+    } for s in ships]
+
+
 def get_deliveries(uid, pwd):
     today = today_str()
     picks = odoo(uid, pwd, "stock.picking", "search_read",

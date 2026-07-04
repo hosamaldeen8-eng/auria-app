@@ -104,6 +104,7 @@ ss.setdefault("email", None)
 ss.setdefault("lang", "ar")
 ss.setdefault("screen", "home")
 ss.setdefault("mo_open", None)
+ss.setdefault("op_pick_open", None)
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -635,7 +636,90 @@ def procurement_screen():
 # ── OPERATIONS ───────────────────────────────────────────────
 def operations_screen():
     uid, pwd = ss.uid, ss.pwd
-    tab1, tab2, tab3 = st.tabs([f"🚚 {t('deliveries')}", "📦 يمامة Tracking", f"🔍 {t('order_lookup')}"])
+
+    # Sub-page: picking detail with validate
+    if ss.get("op_pick_open"):
+        _op_picking_detail(uid, pwd, ss.op_pick_open)
+        return
+
+    tab1, tab2 = st.tabs(["📤 FG ← يمامة", "🚚 يمامة ← العميل"])
+
+    # ── Stage 1: FG → Yamamah (default ready+waiting, validate) ──
+    with tab1:
+        st.caption("تجهيز الطلبات وتسليمها ليمامة — الأقدم أولاً")
+        S1 = {"ready": "🟡 جاهز/بانتظار", "done": "✅ تم", "all": "الكل"}
+        f1c1, f1c2 = st.columns([2, 3])
+        s1 = f1c1.selectbox("الحالة", list(S1.keys()), format_func=lambda k: S1[k], key="op_s1_f")
+        q1 = f1c2.text_input(t("search"), key="op_s1_q", placeholder="رقم الطلب")
+        picks = oc.get_fg_to_yamamah(uid, pwd, s1, q1)
+        st.caption(f"{len(picks)} طلب")
+        for p in picks:
+            st_ar = {"assigned":"🟡 جاهز","confirmed":"🟠 بانتظار","waiting":"⚪ ينتظر","done":"✅ تم"}.get(p["state"], p["state"])
+            card = (
+                "<div class='task-row' style='margin-bottom:4px'>"
+                "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{p['order']}</span>"
+                f"<span style='font-size:11px'>{st_ar}</span></div>"
+                f"<div style='font-weight:700;margin:7px 0 3px'>{p['customer']}</div>"
+                f"<div style='font-size:11px;opacity:.6'>{p['name']} · {p['date']}</div>"
+                "</div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
+            if st.button("عرض وتأكيد ←", key=f"op1_{p['id']}", use_container_width=True):
+                ss.op_pick_open = p["id"]; st.rerun()
+            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+
+    # ── Stage 2: Yamamah → Customer (live API status) ──
+    with tab2:
+        st.caption("الشحنات لدى يمامة — حالة API المباشرة، الأقدم أولاً")
+        S2 = {"all": "الكل", "sent": "🚚 قيد التوصيل", "delivered": "✅ تم التسليم", "returned": "↩️ مرتجع"}
+        f2c1, f2c2 = st.columns([2, 3])
+        s2 = f2c1.selectbox("الحالة", list(S2.keys()), format_func=lambda k: S2[k], key="op_s2_f")
+        q2 = f2c2.text_input(t("search"), key="op_s2_q", placeholder="طلب أو اسم العميل")
+        ships = oc.get_yamamah_to_customer(uid, pwd, s2, q2)
+        st.caption(f"{len(ships)} شحنة")
+        for s in ships:
+            meta = oc.YAMAMAH_STATUS.get(s["api_status"], {"color": "#9BA58F", "bg": "rgba(255,255,255,.07)"})
+            track = f"<a href='{s['tracking_url']}' target='_blank' style='color:#7FB069;font-size:11px'>🔗 {s['code']}</a>" if s["tracking_url"] else ""
+            cod = f" · COD {s['cod']:,.0f}" if s["cod"] else ""
+            card = (
+                "<div class='task-row' style='margin-bottom:4px'>"
+                "<div style='display:flex;justify-content:space-between;align-items:start'>"
+                f"<div><span style='font-family:monospace;font-size:11px;color:#D4A853'>{s['order']}</span><br>"
+                f"<b>{s['recipient']}</b><br>"
+                f"<span style='font-size:11px;opacity:.6'>{s['zone']} · {s['mobile']}{cod}</span></div>"
+                f"<span style='padding:3px 9px;border-radius:20px;font-size:10px;background:{meta['bg']};color:{meta['color']};white-space:nowrap'>{s['api_status']}</span>"
+                f"</div><div style='margin-top:5px'>{track}</div></div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
+
+
+def _op_picking_detail(uid, pwd, picking_id):
+    if st.button("← رجوع"):
+        ss.op_pick_open = None; st.rerun()
+    d = oc.get_picking_detail(uid, pwd, picking_id)
+    if not d:
+        st.error("غير موجود"); return
+    st.markdown(f"""<div class='greeting'>
+        <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['order']} · {d['name']}</div>
+        <div style='font-size:18px;font-weight:700'>{d['customer']}</div>
+        <div style='font-size:12px;opacity:.75;margin-top:4px'>📞 {d['phone']}<br>📍 {d['address']}</div>
+    </div>""", unsafe_allow_html=True)
+    st.markdown("**المنتجات**")
+    for l in d["lines"]:
+        st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span>{l['name']}</span><span style='opacity:.8'>{l['done']:g}/{l['qty']:g}</span></div>", unsafe_allow_html=True)
+    if d["state"] not in ("done", "cancel"):
+        if st.button("✅ تأكيد التسليم ليمامة", type="primary", use_container_width=True):
+            ok, msg = oc.validate_picking(uid, pwd, picking_id)
+            if ok:
+                st.success(msg); ss.op_pick_open = None; st.rerun()
+            else:
+                st.error(msg)
+    else:
+        st.info("تم تأكيد هذا الطلب مسبقاً")
+
+
+def _operations_screen_old():
 
     with tab1:
         for d in oc.get_deliveries(uid, pwd):
