@@ -1154,6 +1154,124 @@ def get_orders(uid, pwd, query=""):
 
 
 # ── CUSTOMER SERVICE ─────────────────────────────────────────
+# ── UNIFIED CRM INBOX (multi-channel) ────────────────────────
+CHANNEL_META = {
+    "facebook":  {"ar": "فيسبوك",    "icon": "📘", "color": "#4267B2"},
+    "whatsapp":  {"ar": "واتساب",    "icon": "💬", "color": "#25D366"},
+    "instagram": {"ar": "انستغرام",  "icon": "📸", "color": "#E4405F"},
+    "tiktok":    {"ar": "تيك توك",   "icon": "🎵", "color": "#69C9D0"},
+}
+
+
+def get_conversations(uid, pwd, channel="all", status="all"):
+    """Unified inbox — all channels in one list, newest activity first."""
+    domain = []
+    if channel != "all":
+        domain.append(["x_channel", "=", channel])
+    if status != "all":
+        domain.append(["x_status", "=", status])
+    convs = odoo(uid, pwd, "x_auria_conversation", "search_read", [domain],
+        {"fields": ["id", "x_customer_name", "x_customer_handle", "x_channel",
+                    "x_status", "x_last_message", "x_unread", "x_agent_id"],
+         "limit": 60, "order": "x_last_message desc"})
+    out = []
+    for c in convs:
+        # last message preview
+        last = odoo(uid, pwd, "x_auria_message", "search_read",
+            [[["x_conversation_id", "=", c["id"]]]],
+            {"fields": ["x_body", "x_direction"], "limit": 1, "order": "x_timestamp desc"})
+        out.append({
+            "id": c["id"], "customer": c["x_customer_name"] or "—",
+            "handle": c["x_customer_handle"] or "",
+            "channel": c["x_channel"], "status": c["x_status"],
+            "unread": c.get("x_unread", 0),
+            "agent": c["x_agent_id"][1] if c.get("x_agent_id") else None,
+            "preview": (last[0]["x_body"][:40] if last else ""),
+            "last_dir": (last[0]["x_direction"] if last else "in"),
+            "time": (c.get("x_last_message") or "")[:16],
+        })
+    return out
+
+
+def get_messages(uid, pwd, conv_id):
+    """All messages in a conversation, chronological."""
+    msgs = odoo(uid, pwd, "x_auria_message", "search_read",
+        [[["x_conversation_id", "=", conv_id]]],
+        {"fields": ["x_body", "x_direction", "x_timestamp", "x_agent_id"],
+         "order": "x_timestamp asc", "limit": 200})
+    return [{
+        "body": m["x_body"], "direction": m["x_direction"],
+        "time": (m.get("x_timestamp") or "")[:16],
+        "agent": m["x_agent_id"][1].split(" ")[0] if m.get("x_agent_id") else None,
+    } for m in msgs]
+
+
+def get_conversation_head(uid, pwd, conv_id):
+    c = odoo(uid, pwd, "x_auria_conversation", "read", [[conv_id]],
+        {"fields": ["x_customer_name", "x_customer_handle", "x_channel", "x_status"]})
+    if not c:
+        return None
+    c = c[0]
+    return {"customer": c["x_customer_name"], "handle": c["x_customer_handle"],
+            "channel": c["x_channel"], "status": c["x_status"]}
+
+
+def send_reply(uid, pwd, conv_id, body):
+    """Agent replies — records outbound message, marks conversation answered.
+    (When channel APIs are added later, this is where the send call goes.)"""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+    conv = odoo(uid, pwd, "x_auria_conversation", "read", [[conv_id]], {"fields": ["x_channel"]})
+    channel = conv[0]["x_channel"] if conv else "facebook"
+    odoo(uid, pwd, "x_auria_message", "create", [{
+        "x_name": body[:20], "x_conversation_id": conv_id, "x_body": body,
+        "x_direction": "out", "x_channel": channel,
+        "x_timestamp": now, "x_agent_id": uid,
+    }])
+    odoo(uid, pwd, "x_auria_conversation", "write", [[conv_id], {
+        "x_status": "answered", "x_last_message": now, "x_unread": 0,
+    }])
+    return True
+
+
+def get_inbox_counts(uid, pwd):
+    """Badge counts for the inbox filter chips."""
+    convs = odoo(uid, pwd, "x_auria_conversation", "search_read", [[]],
+        {"fields": ["x_channel", "x_status", "x_unread"]})
+    from collections import Counter
+    return {
+        "total": len(convs),
+        "open": sum(1 for c in convs if c["x_status"] == "open"),
+        "unread": sum(c.get("x_unread", 0) for c in convs),
+        "by_channel": dict(Counter(c["x_channel"] for c in convs)),
+    }
+
+
+def get_cs_agent_stats(uid, pwd):
+    """Management dashboard: per-agent message counts (received/answered)."""
+    from datetime import date, timedelta
+    week_ago = str(date.today() - timedelta(days=7)) + " 00:00:00"
+    msgs = odoo(uid, pwd, "x_auria_message", "search_read",
+        [[["x_timestamp", ">=", week_ago]]],
+        {"fields": ["x_direction", "x_agent_id", "x_channel"]})
+    from collections import defaultdict
+    stats = defaultdict(lambda: {"answered": 0})
+    inbound = 0
+    by_channel = defaultdict(lambda: {"in": 0, "out": 0})
+    for m in msgs:
+        by_channel[m["x_channel"]][m["x_direction"]] += 1
+        if m["x_direction"] == "out" and m.get("x_agent_id"):
+            stats[m["x_agent_id"][1]]["answered"] += 1
+        if m["x_direction"] == "in":
+            inbound += 1
+    return {
+        "inbound": inbound,
+        "answered": sum(s["answered"] for s in stats.values()),
+        "by_agent": dict(stats),
+        "by_channel": dict(by_channel),
+    }
+
+
 def get_tickets(uid, pwd):
     tickets = odoo(uid, pwd, "project.task", "search_read",
         [[["project_id", "=", DEPT_PROJECT["cs"]]]],

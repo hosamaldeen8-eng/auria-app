@@ -107,6 +107,7 @@ ss.setdefault("mo_open", None)
 ss.setdefault("op_pick_open", None)
 ss.setdefault("po_open", None)
 ss.setdefault("so_open", None)
+ss.setdefault("chat_open", None)
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -281,10 +282,30 @@ def home_screen():
     if perf["overdue_names"]:
         st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
         st.error("⏰ متأخر: " + " · ".join(perf["overdue_names"]))
-    if perf["next_due"]:
-        nd = perf["next_due"]
-        items = "".join(f"<div style='display:flex;justify-content:space-between;padding:3px 0;font-size:12px'><span>{x['name'][:38]}</span><span style='opacity:.6'>{x['date_deadline']}</span></div>" for x in nd)
-        st.markdown(f"<div class='metric-card' style='text-align:start;margin-top:6px'><div style='font-size:11px;opacity:.6;margin-bottom:4px'>المواعيد القادمة</div>{items}</div>", unsafe_allow_html=True)
+    # ── Management: CS team performance ──
+    if info["dept"] == "management":
+        cs = oc.get_cs_agent_stats(uid, pwd)
+        st.markdown("**خدمة العملاء — هذا الأسبوع**")
+        m1, m2, m3 = st.columns(3)
+        rate = round(cs["answered"] / cs["inbound"] * 100) if cs["inbound"] else 0
+        m1.markdown(f"<div class='metric-card'><p class='metric-n' style='color:#E8E4D6'>{cs['inbound']}</p><p class='metric-l'>رسائل واردة</p></div>", unsafe_allow_html=True)
+        m2.markdown(f"<div class='metric-card'><p class='metric-n' style='color:#7FB069'>{cs['answered']}</p><p class='metric-l'>تم الرد</p></div>", unsafe_allow_html=True)
+        m3.markdown(f"<div class='metric-card'><p class='metric-n' style='color:{'#7FB069' if rate>=70 else '#D4A853'}'>{rate}%</p><p class='metric-l'>معدل الرد</p></div>", unsafe_allow_html=True)
+        # Per-agent
+        if cs["by_agent"]:
+            rows = "".join(
+                f"<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)'>"
+                f"<span style='font-size:12px'>{agent.split(' ')[0]}</span>"
+                f"<span style='font-size:12px;color:#7FB069'>{s['answered']} رد</span></div>"
+                for agent, s in sorted(cs["by_agent"].items(), key=lambda x: -x[1]["answered"]))
+            st.markdown(f"<div class='metric-card' style='text-align:start'>{rows}</div>", unsafe_allow_html=True)
+        # By channel
+        if cs["by_channel"]:
+            chips = "".join(
+                f"<span style='background:{oc.CHANNEL_META.get(ch,{}).get('color','#888')}22;color:{oc.CHANNEL_META.get(ch,{}).get('color','#888')};padding:3px 9px;border-radius:20px;font-size:11px;margin:2px'>"
+                f"{oc.CHANNEL_META.get(ch,{}).get('icon','•')} {v['in']}↓ {v['out']}↑</span>"
+                for ch, v in cs["by_channel"].items())
+            st.markdown(f"<div style='margin-top:8px'>{chips}</div>", unsafe_allow_html=True)
 
 # ── TASKS ────────────────────────────────────────────────────
 def tasks_screen():
@@ -1084,8 +1105,134 @@ def cs_screen():
     uid, pwd = ss.uid, ss.pwd
     if "cs_open" not in ss:
         ss.cs_open = None
+    if "chat_open" not in ss:
+        ss.chat_open = None
 
-    tab1, tab2 = st.tabs([f"💬 {t('tickets')}", "📦 حالة الطلب"])
+    # Chat view takes over the screen
+    if ss.chat_open:
+        _chat_view(uid, pwd, ss.chat_open)
+        return
+
+    tab1, tab2, tab3 = st.tabs(["💬 المحادثات", "🎫 التذاكر", "📦 حالة الطلب"])
+
+    # ── Tab 1: Unified inbox ──
+    with tab1:
+        counts = oc.get_inbox_counts(uid, pwd)
+        # Channel filter chips
+        st.markdown(f"<div style='font-size:12px;opacity:.7;margin-bottom:6px'>"
+                    f"📥 {counts['open']} مفتوحة · {counts['unread']} غير مقروءة</div>",
+                    unsafe_allow_html=True)
+        fc1, fc2 = st.columns(2)
+        ch_opts = ["all"] + list(oc.CHANNEL_META.keys())
+        channel_f = fc1.selectbox("القناة", ch_opts,
+            format_func=lambda k: "كل القنوات" if k == "all" else f"{oc.CHANNEL_META[k]['icon']} {oc.CHANNEL_META[k]['ar']}",
+            key="cs_channel_f")
+        status_f = fc2.selectbox("الحالة", ["all", "open", "answered", "closed"],
+            format_func=lambda k: {"all": "الكل", "open": "مفتوحة", "answered": "تم الرد", "closed": "مغلقة"}[k],
+            key="cs_status_f")
+
+        convs = oc.get_conversations(uid, pwd, channel_f, status_f)
+        for c in convs:
+            m = oc.CHANNEL_META.get(c["channel"], {"icon": "•", "color": "#888", "ar": ""})
+            unread_badge = f"<span style='background:#E07070;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700'>{c['unread']}</span>" if c["unread"] else ""
+            status_dot = {"open": "🟢", "answered": "🔵", "closed": "⚪"}.get(c["status"], "")
+            prefix = "↩️ " if c["last_dir"] == "out" else ""
+            card = (
+                "<div class='task-row' style='margin-bottom:4px'>"
+                "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<span style='font-weight:700'>{m['icon']} {c['customer']}</span>"
+                f"<span style='display:flex;gap:6px;align-items:center'>{unread_badge}<span style='font-size:11px;opacity:.5'>{c['time'][-5:]}</span></span>"
+                "</div>"
+                f"<div style='font-size:12px;opacity:.65;margin-top:4px'>{status_dot} {prefix}{c['preview']}</div>"
+                "</div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
+            if st.button("فتح المحادثة", key=f"conv_{c['id']}", use_container_width=True):
+                ss.chat_open = c["id"]; st.rerun()
+            st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
+
+    # ── Tab 2: Tickets (existing) ──
+    with tab2:
+        if ss.cs_open:
+            ticket = ss.cs_open
+            if st.button("← التذاكر"):
+                ss.cs_open = None; st.rerun()
+            st.markdown(f"**{ticket['customer']}** — {ticket['issue']}")
+            for msg in oc.get_ticket_messages(uid, pwd, ticket["id"]):
+                st.markdown(f"<div class='task-row'><b style='font-size:12px'>{msg['author']}</b><br>{msg['text']}<br><span style='color:#aaa;font-size:10px'>{msg['date']}</span></div>", unsafe_allow_html=True)
+            reply = st.text_input(t("reply"), key="cs_reply")
+            if st.button(t("post"), type="primary"):
+                if reply.strip():
+                    oc.reply_ticket(uid, pwd, ticket["id"], reply); st.success("✓"); st.rerun()
+        else:
+            for tk in oc.get_tickets(uid, pwd):
+                if st.button(f"💬 {tk['customer']} — {tk['issue'][:30]}  ·  {tk['status']}", key=f"tk_{tk['id']}", use_container_width=True):
+                    ss.cs_open = tk; st.rerun()
+
+    # ── Tab 3: Order status ──
+    with tab3:
+        st.caption("ابحث عن طلب لمعرفة حالة التوصيل من يمامة")
+        order_no = st.text_input("رقم الطلب", key="cs_order_lookup", placeholder="S02486")
+        if order_no.strip():
+            status = oc.get_order_delivery_status(uid, pwd, order_no.strip())
+            if status:
+                meta = oc.YAMAMAH_STATUS.get(status["api_status"], {"color": "#9BA58F", "bg": "rgba(255,255,255,.07)"})
+                track = f"<a href='{status['tracking_url']}' target='_blank' style='color:#7FB069'>🔗 رابط التتبّع</a>" if status["tracking_url"] else ""
+                st.markdown(f"""<div class='task-row'>
+                    <div style='display:flex;justify-content:space-between;align-items:center'>
+                      <b>{status['recipient']}</b>
+                      <span style='padding:4px 12px;border-radius:20px;font-size:12px;background:{meta['bg']};color:{meta['color']}'>{status['api_status']}</span>
+                    </div>
+                    <div style='color:#9BA58F;font-size:12px;margin-top:6px'>
+                      شحنة: {status['shipment']}<br>الهاتف: {status['mobile']}<br>COD: {status['cod']:,.0f} د.ل<br>التاريخ: {status['date']}
+                    </div>
+                    <div style='margin-top:8px'>{track}</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.warning(f"لا توجد شحنة للطلب {order_no}")
+
+
+def _chat_view(uid, pwd, conv_id):
+    if st.button("← المحادثات"):
+        ss.chat_open = None; st.rerun()
+    head = oc.get_conversation_head(uid, pwd, conv_id)
+    if not head:
+        st.error("غير موجود"); return
+    m = oc.CHANNEL_META.get(head["channel"], {"icon": "•", "ar": "", "color": "#888"})
+    st.markdown(f"""<div class='greeting'>
+        <div style='display:flex;justify-content:space-between;align-items:center'>
+          <div><div style='font-size:17px;font-weight:700'>{head['customer']}</div>
+          <div style='font-size:12px;opacity:.6'>{head['handle']}</div></div>
+          <span style='background:{m['color']}22;color:{m['color']};padding:4px 12px;border-radius:20px;font-size:12px'>{m['icon']} {m['ar']}</span>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # Message stream — chat bubbles
+    msgs = oc.get_messages(uid, pwd, conv_id)
+    for msg in msgs:
+        if msg["direction"] == "in":
+            bubble = (f"<div style='display:flex;justify-content:flex-start;margin:4px 0'>"
+                      f"<div style='background:#1E281E;border:1px solid #2E3D2E;border-radius:14px 14px 14px 4px;padding:8px 12px;max-width:78%'>"
+                      f"<div style='font-size:13px'>{msg['body']}</div>"
+                      f"<div style='font-size:9px;opacity:.4;margin-top:3px'>{msg['time'][-5:]}</div></div></div>")
+        else:
+            agent = f" · {msg['agent']}" if msg["agent"] else ""
+            bubble = (f"<div style='display:flex;justify-content:flex-end;margin:4px 0'>"
+                      f"<div style='background:rgba(127,176,105,.16);border:1px solid rgba(127,176,105,.3);border-radius:14px 14px 4px 14px;padding:8px 12px;max-width:78%'>"
+                      f"<div style='font-size:13px'>{msg['body']}</div>"
+                      f"<div style='font-size:9px;opacity:.4;margin-top:3px;text-align:left'>{msg['time'][-5:]}{agent}</div></div></div>")
+        st.markdown(bubble, unsafe_allow_html=True)
+
+    # Reply box
+    reply = st.text_input("اكتب رداً...", key=f"chat_reply_{conv_id}", label_visibility="collapsed",
+                          placeholder="اكتب رداً...")
+    if st.button("إرسال ➤", type="primary", use_container_width=True, key=f"chat_send_{conv_id}"):
+        if reply.strip():
+            oc.send_reply(uid, pwd, conv_id, reply)
+            st.rerun()
+
+
+def _cs_screen_old():
 
     with tab1:
         if ss.cs_open:
