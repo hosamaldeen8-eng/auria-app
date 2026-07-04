@@ -1,4 +1,4 @@
-# v2 — BOM dropdown + work order timers + Yamamah tracking (deploy trigger)
+# v3 — full ops suite: PO/expenses/sales/CRM/sessions (deploy trigger)
 """
 ╔══════════════════════════════════════════════════════════╗
 ║   AURIA — Department App (Streamlit)                     ║
@@ -652,6 +652,9 @@ def production_screen():
 # ── PROCUREMENT ──────────────────────────────────────────────
 def procurement_screen():
     uid, pwd = ss.uid, ss.pwd
+    if not hasattr(oc, "get_pos"):
+        st.error("⚠️ التطبيق يُحدّث — أعد التحميل بعد لحظات (Manage app → Reboot).")
+        st.stop()
 
     # Sub-page: PO detail
     if ss.get("po_open"):
@@ -913,6 +916,9 @@ def operations_screen():
 
 def sales_screen():
     uid, pwd = ss.uid, ss.pwd
+    if not hasattr(oc, "get_sales_orders"):
+        st.error("⚠️ التطبيق يُحدّث — أعد التحميل بعد لحظات (Manage app → Reboot).")
+        st.stop()
     if ss.get("so_open"):
         _so_detail(uid, pwd, ss.so_open)
         return
@@ -1109,6 +1115,9 @@ def creative_screen():
 # ── CUSTOMER SERVICE ─────────────────────────────────────────
 def cs_screen():
     uid, pwd = ss.uid, ss.pwd
+    if not hasattr(oc, "get_conversations"):
+        st.error("⚠️ التطبيق يُحدّث — أعد التحميل بعد لحظات (Manage app → Reboot).")
+        st.stop()
     if "cs_open" not in ss:
         ss.cs_open = None
     if "chat_open" not in ss:
