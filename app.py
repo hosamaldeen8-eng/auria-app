@@ -105,6 +105,7 @@ ss.setdefault("lang", "ar")
 ss.setdefault("screen", "home")
 ss.setdefault("mo_open", None)
 ss.setdefault("op_pick_open", None)
+ss.setdefault("po_open", None)
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -623,7 +624,195 @@ def production_screen():
 # ── PROCUREMENT ──────────────────────────────────────────────
 def procurement_screen():
     uid, pwd = ss.uid, ss.pwd
-    st.markdown(f"**{t('rfqs')}**")
+
+    # Sub-page: PO detail
+    if ss.get("po_open"):
+        _po_detail(uid, pwd, ss.po_open)
+        return
+
+    tab1, tab2, tab3 = st.tabs(["🛒 أوامر الشراء", "🧾 المصروفات", "🔄 الاستلام"])
+
+    # ── Tab 1: PO Management ──
+    with tab1:
+        f1, f2 = st.columns([2, 3])
+        po_state = f1.selectbox("الحالة", ["all", "draft", "sent", "purchase", "done", "cancel"],
+            format_func=lambda k: {"all": "الكل", "draft": "طلب عرض", "sent": "مُرسل",
+                                   "purchase": "مؤكد", "done": "مُغلق", "cancel": "ملغي"}[k],
+            index=3, key="po_state_f")  # default: confirmed
+        po_q = f2.text_input(t("search"), key="po_q", placeholder="رقم أو مورّد")
+        pos = oc.get_pos(uid, pwd, po_state, po_q)
+        st.caption(f"{len(pos)} أمر")
+        for p in pos:
+            meta = oc.PO_STATE.get(p["state"], {"ar": p["state"], "color": "#9BA58F", "bg": "rgba(255,255,255,.07)"})
+            rc = oc.RECEIPT_STATE.get(p["receipt"], "")
+            rc_chip = f"<span style='background:rgba(127,176,105,.12);color:#7FB069;padding:3px 9px;border-radius:8px;font-size:10px'>📦 {rc}</span>" if rc else ""
+            card = (
+                "<div class='task-row' style='margin-bottom:4px'>"
+                "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{p['name']}</span>"
+                f"<span style='background:{meta['bg']};color:{meta['color']};padding:3px 11px;border-radius:20px;font-size:11px;font-weight:600'>{meta['ar']}</span>"
+                "</div>"
+                f"<div style='font-size:15px;font-weight:700;margin:9px 0 6px'>{p['supplier']}</div>"
+                "<div style='display:flex;gap:6px;flex-wrap:wrap;align-items:center'>"
+                f"<span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>💰 {p['total']:,.0f} {p['currency']}</span>"
+                f"<span style='background:rgba(255,255,255,.07);padding:4px 10px;border-radius:8px;font-size:11px'>📅 {p['date']}</span>"
+                f"{rc_chip}</div></div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
+            if st.button("إدارة الأمر ←", key=f"po_{p['id']}", use_container_width=True):
+                ss.po_open = p["id"]; st.rerun()
+            st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
+
+    # ── Tab 2: Expenses (with camera) ──
+    with tab2:
+        _expenses_tab(uid, pwd)
+
+    # ── Tab 3: Receiving / Transfers ──
+    with tab3:
+        _receiving_tab(uid, pwd)
+
+
+def _po_detail(uid, pwd, po_id):
+    if st.button("← أوامر الشراء"):
+        ss.po_open = None; st.rerun()
+    d = oc.get_po_detail(uid, pwd, po_id)
+    if not d:
+        st.error("غير موجود"); return
+    meta = oc.PO_STATE.get(d["state"], {"ar": d["state"]})
+    st.markdown(f"""<div class='greeting'>
+        <div style='display:flex;justify-content:space-between;align-items:start'>
+          <div>
+            <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['name']}</div>
+            <div style='font-size:18px;font-weight:700'>{d['supplier']}</div>
+            <div style='font-size:12px;opacity:.7;margin-top:2px'>{meta['ar']} · {d['date']}</div>
+          </div>
+          <div style='text-align:center;background:rgba(255,255,255,.08);border-radius:10px;padding:8px 14px'>
+            <div style='font-size:18px;font-weight:700;color:#D4A853'>{d['total']:,.0f}</div>
+            <div style='font-size:9px;opacity:.6'>{d['currency']}</div>
+          </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # Actions
+    if d["state"] in ("draft", "sent"):
+        c1, c2 = st.columns(2)
+        if c1.button("🟢 تأكيد الأمر", use_container_width=True, type="primary"):
+            ok, msg = oc.po_confirm(uid, pwd, po_id)
+            st.success(msg) if ok else st.error(msg)
+            if ok: st.rerun()
+        if c2.button("✖️ إلغاء", use_container_width=True):
+            ok, msg = oc.po_cancel(uid, pwd, po_id)
+            st.success(msg) if ok else st.error(msg)
+            if ok: st.rerun()
+
+    st.markdown("**المنتجات**")
+    for l in d["lines"]:
+        if not l["qty"]:
+            continue
+        recv_pct = min(100, round(l["received"] / l["qty"] * 100)) if l["qty"] else 0
+        rc_col = "#7FB069" if recv_pct >= 100 else "#D4A853" if recv_pct > 0 else "#9BA58F"
+        st.markdown(f"""<div class='task-row'>
+            <div style='display:flex;justify-content:space-between'>
+              <b>{l['name']}</b><span style='color:#D4A853'>{l['subtotal']:,.0f}</span>
+            </div>
+            <div style='font-size:11px;opacity:.7;margin-top:3px'>
+              {l['qty']:g} × {l['price']:,.2f} · <span style='color:{rc_col}'>مستلم {l['received']:g}/{l['qty']:g}</span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    if d["receipts"]:
+        st.markdown("**الاستلامات**")
+        for r in d["receipts"]:
+            st_ar = {"done": "✅ تم", "assigned": "🟡 جاهز", "confirmed": "🟠 بانتظار", "cancel": "ملغي"}.get(r["state"], r["state"])
+            st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span style='font-family:monospace;font-size:12px'>{r['name']}</span><span style='font-size:11px'>{st_ar}</span></div>", unsafe_allow_html=True)
+
+
+def _expenses_tab(uid, pwd):
+    with st.expander("➕ تسجيل مصروف جديد"):
+        cats = oc.get_expense_categories(uid, pwd)
+        if not cats:
+            st.info("لا توجد فئات مصروفات")
+        else:
+            cat_names = [c["name"] for c in cats]
+            ci = st.selectbox("الفئة", range(len(cat_names)), format_func=lambda i: cat_names[i], key="exp_cat")
+            desc = st.text_input("الوصف", key="exp_desc", placeholder="مثال: فاتورة كهرباء السراج")
+            amount = st.number_input("المبلغ (د.ل)", min_value=0.0, step=5.0, key="exp_amount")
+            # Camera capture for the receipt
+            st.caption("📸 صوّر الإيصال (اختياري)")
+            photo = st.camera_input("التقط صورة الإيصال", key="exp_cam", label_visibility="collapsed")
+            if st.button("حفظ المصروف", type="primary", use_container_width=True, key="exp_save"):
+                if not desc.strip() or amount <= 0:
+                    st.error("أدخل الوصف والمبلغ")
+                else:
+                    photo_bytes = photo.getvalue() if photo else None
+                    ok, msg = oc.create_expense(uid, pwd, cats[ci]["id"], desc, amount, photo_bytes)
+                    if ok:
+                        st.success(msg); st.rerun()
+                    else:
+                        st.error(msg)
+
+    st.markdown("**مصروفاتي**")
+    exps = oc.get_my_expenses(uid, pwd)
+    if not exps:
+        st.caption("لا توجد مصروفات")
+    for e in exps:
+        st_col = {"مدفوع": "#7FB069", "معتمد": "#7FB069", "مرفوض": "#E07070",
+                  "قيد المراجعة": "#D4A853"}.get(e["state"], "#9BA58F")
+        st.markdown(f"""<div class='task-row'>
+            <div style='display:flex;justify-content:space-between'>
+              <b>{e['name']}</b><span style='color:#D4A853'>{e['amount']:,.0f}</span>
+            </div>
+            <div style='font-size:11px;margin-top:3px'>
+              <span style='opacity:.6'>{e['category']} · {e['date']}</span>
+              <span style='color:{st_col};float:left'>{e['state']}</span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+
+def _receiving_tab(uid, pwd):
+    st.markdown("**📥 استلام المشتريات** <span style='opacity:.5;font-size:11px'>(مورد ← الاستلام)</span>", unsafe_allow_html=True)
+    receipts = oc.get_pending_receipts(uid, pwd)
+    if not receipts:
+        st.caption("لا توجد استلامات معلقة")
+    for r in receipts:
+        lines_txt = " · ".join(f"{l['name'][:22]} ×{l['qty']:g}" for l in r["lines"][:3])
+        card = (
+            "<div class='task-row' style='margin-bottom:4px'>"
+            "<div style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{r['name']}</span>"
+            f"<span style='background:rgba(255,255,255,.07);padding:3px 10px;border-radius:8px;font-size:11px'>📅 {r['date']}</span>"
+            "</div>"
+            f"<div style='font-weight:700;margin:8px 0 5px'>{r['supplier']}</div>"
+            f"<div style='font-size:11px;opacity:.7'>{r['po']} — {lines_txt}</div>"
+            "</div>"
+        )
+        st.markdown(card, unsafe_allow_html=True)
+        if st.button("📥 استلام كامل", key=f"prcv_{r['id']}", use_container_width=True):
+            ok, msg = oc.validate_picking(uid, pwd, r["id"])
+            st.success(msg) if ok else st.error(msg)
+            if ok: st.rerun()
+        st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+
+    st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
+    st.markdown("**🔄 تحويل داخلي**")
+    route_key = st.selectbox("المسار", list(oc.TRANSFER_ROUTES.keys()),
+        format_func=lambda k: oc.TRANSFER_ROUTES[k]["label"], key="prc_route")
+    route = oc.TRANSFER_ROUTES[route_key]
+    avail = oc.get_products_at_location(uid, pwd, route["src"])
+    if not avail:
+        st.info("لا يوجد مخزون في موقع المصدر")
+    else:
+        pnames = [f"{p['name']} (متاح {p['available']:g})" for p in avail]
+        pi = st.selectbox("المنتج", range(len(pnames)), format_func=lambda i: pnames[i], key="prc_prod")
+        chosen = avail[pi]
+        qty = st.number_input("الكمية", min_value=0.01, max_value=float(chosen["available"]),
+                              value=float(chosen["available"]), key="prc_qty")
+        if st.button("🔄 نفّذ التحويل", type="primary", use_container_width=True, key="prc_go"):
+            ok, msg = oc.create_transfer(uid, pwd, route_key, chosen["id"], qty)
+            st.success(msg) if ok else st.error(msg)
+
+
+def _procurement_screen_old():
     for rfq in oc.get_rfqs(uid, pwd):
         c1, c2 = st.columns([4, 1])
         with c1:

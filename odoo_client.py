@@ -476,6 +476,67 @@ TRANSFER_ROUTES = {
 }
 
 
+# ── EXPENSES ─────────────────────────────────────────────────
+def get_expense_categories(uid, pwd):
+    """Expensable products (categories) for the expense form."""
+    prods = odoo(uid, pwd, "product.product", "search_read",
+        [[["can_be_expensed", "=", True]]], {"fields": ["id", "name"]})
+    return [{"id": p["id"], "name": p["name"]} for p in prods]
+
+
+def get_my_employee(uid, pwd):
+    """The hr.employee linked to this Odoo user (expenses need it)."""
+    emp = odoo(uid, pwd, "hr.employee", "search_read",
+        [[["user_id", "=", uid]]], {"fields": ["id", "name"], "limit": 1})
+    return emp[0] if emp else None
+
+
+def get_my_expenses(uid, pwd):
+    """This user's recent expenses."""
+    emp = get_my_employee(uid, pwd)
+    if not emp:
+        return []
+    exps = odoo(uid, pwd, "hr.expense", "search_read",
+        [[["employee_id", "=", emp["id"]]]],
+        {"fields": ["name", "total_amount", "state", "date", "product_id"],
+         "limit": 20, "order": "date desc"})
+    ST = {"draft": "مسودة", "reported": "مُقدّم", "submitted": "قيد المراجعة",
+          "approved": "معتمد", "done": "مدفوع", "refused": "مرفوض"}
+    return [{
+        "name": e["name"], "amount": e["total_amount"],
+        "state": ST.get(e["state"], e["state"]),
+        "date": (e.get("date") or "")[:10],
+        "category": e["product_id"][1] if e.get("product_id") else "—",
+    } for e in exps]
+
+
+def create_expense(uid, pwd, category_id, description, amount, photo_bytes=None, photo_name="receipt.jpg"):
+    """Create an expense; optionally attach a receipt photo. Returns (ok, msg)."""
+    emp = get_my_employee(uid, pwd)
+    if not emp:
+        return False, "لا يوجد ملف موظف مرتبط بحسابك"
+    try:
+        exp_id = odoo(uid, pwd, "hr.expense", "create", [{
+            "name": description,
+            "product_id": category_id,
+            "total_amount_currency": float(amount),
+            "quantity": 1.0,
+            "employee_id": emp["id"],
+        }])
+        if photo_bytes:
+            import base64 as _b64
+            odoo(uid, pwd, "ir.attachment", "create", [{
+                "name": photo_name,
+                "res_model": "hr.expense",
+                "res_id": exp_id,
+                "datas": _b64.b64encode(photo_bytes).decode(),
+                "mimetype": "image/jpeg",
+            }])
+        return True, "تم تسجيل المصروف ✓"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
 def get_pending_receipts(uid, pwd):
     """Incoming purchase receipts waiting to be received (Partner → RM-Receiving)."""
     picks = odoo(uid, pwd, "stock.picking", "search_read",
@@ -736,6 +797,95 @@ def get_rfqs(uid, pwd):
 
 def approve_rfq(uid, pwd, po_id):
     odoo(uid, pwd, "purchase.order", "button_confirm", [[po_id]])
+
+
+# ── PROCUREMENT: PO management (mirrors MO module) ───────────
+PO_STATE = {
+    "draft":    {"ar": "طلب عرض",  "color": "#9BA58F", "bg": "rgba(255,255,255,.08)"},
+    "sent":     {"ar": "مُرسل",    "color": "#D4A853", "bg": "rgba(212,168,83,.14)"},
+    "purchase": {"ar": "مؤكد",     "color": "#7FB069", "bg": "rgba(127,176,105,.15)"},
+    "done":     {"ar": "مُغلق",    "color": "#9BA58F", "bg": "rgba(255,255,255,.06)"},
+    "cancel":   {"ar": "ملغي",     "color": "#E07070", "bg": "rgba(224,112,112,.12)"},
+}
+RECEIPT_STATE = {"full": "مُستلم", "partial": "جزئي", "pending": "بانتظار", "nothing": "لم يُستلم"}
+
+
+def get_pos(uid, pwd, state="all", query=""):
+    """Purchase orders list with filter + search."""
+    domain = []
+    if state != "all":
+        domain.append(["state", "=", state])
+    if query:
+        domain += ["|", ["name", "ilike", query], ["partner_id.name", "ilike", query]]
+    pos = odoo(uid, pwd, "purchase.order", "search_read", [domain],
+        {"fields": ["id", "name", "partner_id", "state", "amount_total", "currency_id",
+                    "date_order", "receipt_status", "invoice_status"],
+         "limit": 40, "order": "date_order desc"})
+    return [{
+        "id": p["id"], "name": p["name"],
+        "supplier": p["partner_id"][1] if p.get("partner_id") else "—",
+        "state": p["state"], "total": p["amount_total"],
+        "currency": p["currency_id"][1] if p.get("currency_id") else "LYD",
+        "date": (p.get("date_order") or "")[:10],
+        "receipt": p.get("receipt_status") or "",
+        "invoice": p.get("invoice_status") or "",
+    } for p in pos]
+
+
+def get_po_detail(uid, pwd, po_id):
+    """Full PO: supplier, lines with received qty, totals, linked receipts."""
+    p = odoo(uid, pwd, "purchase.order", "read", [[po_id]],
+        {"fields": ["name", "partner_id", "state", "amount_total", "amount_untaxed",
+                    "currency_id", "date_order", "date_planned", "order_line",
+                    "receipt_status", "invoice_status", "notes"]})
+    if not p:
+        return None
+    p = p[0]
+    lines = []
+    if p.get("order_line"):
+        recs = odoo(uid, pwd, "purchase.order.line", "read", [p["order_line"]],
+            {"fields": ["product_id", "product_qty", "qty_received", "price_unit", "price_subtotal"]})
+        for l in recs:
+            lines.append({
+                "name": l["product_id"][1] if l.get("product_id") else "—",
+                "qty": l["product_qty"], "received": l.get("qty_received", 0),
+                "price": l["price_unit"], "subtotal": l["price_subtotal"],
+            })
+    # Linked receipts (incoming pickings)
+    receipts = odoo(uid, pwd, "stock.picking", "search_read",
+        [[["origin", "=", p["name"]], ["picking_type_id.code", "=", "incoming"]]],
+        {"fields": ["name", "state"], "limit": 10})
+    return {
+        "id": po_id, "name": p["name"],
+        "supplier": p["partner_id"][1] if p.get("partner_id") else "—",
+        "state": p["state"], "total": p["amount_total"], "untaxed": p["amount_untaxed"],
+        "currency": p["currency_id"][1] if p.get("currency_id") else "LYD",
+        "date": (p.get("date_order") or "")[:16],
+        "planned": (p.get("date_planned") or "")[:10],
+        "receipt": p.get("receipt_status") or "",
+        "invoice": p.get("invoice_status") or "",
+        "lines": lines, "receipts": receipts,
+    }
+
+
+def po_confirm(uid, pwd, po_id):
+    try:
+        odoo(uid, pwd, "purchase.order", "button_confirm", [[po_id]])
+        return True, "تم تأكيد أمر الشراء ✓"
+    except Exception as e:
+        if "cannot marshal None" in str(e):
+            return True, "تم تأكيد أمر الشراء ✓"
+        return False, _clean_odoo_error(e)
+
+
+def po_cancel(uid, pwd, po_id):
+    try:
+        odoo(uid, pwd, "purchase.order", "button_cancel", [[po_id]])
+        return True, "تم الإلغاء"
+    except Exception as e:
+        if "cannot marshal None" in str(e):
+            return True, "تم الإلغاء"
+        return False, _clean_odoo_error(e)
 
 
 # ── OPERATIONS ───────────────────────────────────────────────
