@@ -153,6 +153,7 @@ if not ss.uid and not ss.get("auto_login_tried"):
             uid, info = oc.authenticate(email, pwd)
             if uid:
                 ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email
+                oc.touch_session(uid, pwd)
                 st.rerun()
         except Exception:
             pass
@@ -173,6 +174,7 @@ def login_screen():
             if uid:
                 ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email.strip()
                 ss.pending_cookie_save = (email.strip(), pwd)  # stay signed in 30 days
+                oc.touch_session(uid, pwd)
                 ss.screen = "home"
                 st.rerun()
             else:
@@ -291,13 +293,17 @@ def home_screen():
         m1.markdown(f"<div class='metric-card'><p class='metric-n' style='color:#E8E4D6'>{cs['inbound']}</p><p class='metric-l'>رسائل واردة</p></div>", unsafe_allow_html=True)
         m2.markdown(f"<div class='metric-card'><p class='metric-n' style='color:#7FB069'>{cs['answered']}</p><p class='metric-l'>تم الرد</p></div>", unsafe_allow_html=True)
         m3.markdown(f"<div class='metric-card'><p class='metric-n' style='color:{'#7FB069' if rate>=70 else '#D4A853'}'>{rate}%</p><p class='metric-l'>معدل الرد</p></div>", unsafe_allow_html=True)
-        # Per-agent
+        # Per-agent (replies + time on app today)
         if cs["by_agent"]:
-            rows = "".join(
-                f"<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)'>"
-                f"<span style='font-size:12px'>{agent.split(' ')[0]}</span>"
-                f"<span style='font-size:12px;color:#7FB069'>{s['answered']} رد</span></div>"
-                for agent, s in sorted(cs["by_agent"].items(), key=lambda x: -x[1]["answered"]))
+            CS_UIDS = [24, 12, 10, 9]  # Amal, Wala, Znjabel, Ala
+            time_map = oc.get_team_time_on_app(uid, pwd, CS_UIDS)
+            rows = ""
+            for agent, s in sorted(cs["by_agent"].items(), key=lambda x: -x[1]["answered"]):
+                mins = next((v for k, v in time_map.items() if agent.split(" ")[0] in k), 0)
+                tstr = f"{mins//60}س {mins%60}د" if mins >= 60 else f"{mins}د"
+                rows += (f"<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)'>"
+                         f"<span style='font-size:12px'>{agent.split(' ')[0]}</span>"
+                         f"<span style='font-size:12px'><span style='color:#7FB069'>{s['answered']} رد</span> · <span style='opacity:.6'>⏱ {tstr}</span></span></div>")
             st.markdown(f"<div class='metric-card' style='text-align:start'>{rows}</div>", unsafe_allow_html=True)
         # By channel
         if cs["by_channel"]:
@@ -1331,6 +1337,7 @@ def profile_screen():
 if not ss.uid:
     login_screen()
 else:
+    oc.touch_session(ss.uid, ss.pwd)  # activity heartbeat
     header()
     nav()
     screen = ss.screen

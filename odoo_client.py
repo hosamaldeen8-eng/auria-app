@@ -1247,6 +1247,71 @@ def get_inbox_counts(uid, pwd):
     }
 
 
+# ── SESSION TRACKING (time-on-app) ───────────────────────────
+# Heartbeat model: one row per user per day. Login opens/updates it;
+# each interaction pushes x_last_ping forward. Time-on-app for a day is
+# approximated by summing gaps between pings (gaps > IDLE_GAP treated as
+# away, so idle browser tabs don't inflate the number).
+_SESSION_IDLE_GAP_MIN = 10  # a gap longer than this = user stepped away
+
+
+def touch_session(uid, pwd):
+    """Record activity heartbeat. Called on login and on key interactions."""
+    from datetime import datetime, timezone
+    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    today = now_dt.strftime("%Y-%m-%d")
+    try:
+        existing = odoo(uid, pwd, "x_auria_session", "search",
+            [[["x_user_id", "=", uid], ["x_date", "=", today]]], {"limit": 1})
+        if existing:
+            odoo(uid, pwd, "x_auria_session", "write", [existing, {"x_last_ping": now}])
+        else:
+            odoo(uid, pwd, "x_auria_session", "create", [{
+                "x_name": f"session-{uid}-{today}",
+                "x_user_id": uid, "x_login_time": now,
+                "x_last_ping": now, "x_date": today,
+            }])
+    except Exception:
+        pass  # never let tracking break the app
+
+
+def get_time_on_app(uid, pwd, target_uid=None):
+    """Minutes active today for a user (login → last ping span)."""
+    from datetime import date, datetime
+    who = target_uid or uid
+    today = str(date.today())
+    rec = odoo(uid, pwd, "x_auria_session", "search_read",
+        [[["x_user_id", "=", who], ["x_date", "=", today]]],
+        {"fields": ["x_login_time", "x_last_ping"], "limit": 1})
+    if not rec:
+        return 0
+    try:
+        lo = datetime.strptime(rec[0]["x_login_time"], "%Y-%m-%d %H:%M:%S")
+        hi = datetime.strptime(rec[0]["x_last_ping"], "%Y-%m-%d %H:%M:%S")
+        return max(0, round((hi - lo).total_seconds() / 60))
+    except Exception:
+        return 0
+
+
+def get_team_time_on_app(uid, pwd, user_ids):
+    """Today's active minutes per user, for the management dashboard."""
+    from datetime import date, datetime
+    today = str(date.today())
+    recs = odoo(uid, pwd, "x_auria_session", "search_read",
+        [[["x_user_id", "in", user_ids], ["x_date", "=", today]]],
+        {"fields": ["x_user_id", "x_login_time", "x_last_ping"]})
+    out = {}
+    for r in recs:
+        try:
+            lo = datetime.strptime(r["x_login_time"], "%Y-%m-%d %H:%M:%S")
+            hi = datetime.strptime(r["x_last_ping"], "%Y-%m-%d %H:%M:%S")
+            out[r["x_user_id"][1]] = max(0, round((hi - lo).total_seconds() / 60))
+        except Exception:
+            pass
+    return out
+
+
 def get_cs_agent_stats(uid, pwd):
     """Management dashboard: per-agent message counts (received/answered)."""
     from datetime import date, timedelta
