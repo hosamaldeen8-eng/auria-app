@@ -226,13 +226,14 @@ def get_dept_kpis(uid, pwd, dept):
 def get_tasks(uid, pwd, scope="mine"):
     domain = [["user_ids", "in", [uid]]] if scope == "mine" else []
     tasks = odoo(uid, pwd, "project.task", "search_read", [domain],
-        {"fields": ["id", "name", "stage_id", "priority", "date_deadline", "project_id"],
+        {"fields": ["id", "name", "stage_id", "priority", "date_deadline", "project_id", "write_date"],
          "limit": 100, "order": "priority desc, date_deadline asc"})
     return [{
         "id": t["id"], "name": t["name"],
         "stage": t["stage_id"][1].strip() if t["stage_id"] else "—",
         "priority": t["priority"], "due": t["date_deadline"] or "",
         "project": t["project_id"][1] if t["project_id"] else "—",
+        "updated": (t.get("write_date") or "")[:10],
     } for t in tasks]
 
 

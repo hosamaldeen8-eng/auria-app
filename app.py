@@ -231,16 +231,31 @@ def home_screen():
     st.markdown(f"**{t('my_performance')}**")
     perf = oc.get_my_performance(uid, pwd)
 
-    # Row 1: core numbers
-    c = st.columns(4)
+    # Row 1: core numbers — tap any box to open Tasks with that filter
     core = [
-        (perf["open"],      "مفتوح",   "#E8E4D6"),
-        (perf["done_week"], "أُنجز هذا الأسبوع", "#7FB069"),
-        (perf["urgent"],    t("urgent"),  "#E07070" if perf["urgent"] else "#888"),
-        (perf["overdue"],   t("overdue"), "#E07070" if perf["overdue"] else "#7FB069"),
+        ("pf_open",    perf["open"],      "مفتوح",             "open",      "#E8E4D6"),
+        ("pf_done",    perf["done_week"], "أُنجز هذا الأسبوع",  "done_week", "#7FB069"),
+        ("pf_urgent",  perf["urgent"],    t("urgent"),          "urgent",    "#E07070" if perf["urgent"] else "#9BA58F"),
+        ("pf_overdue", perf["overdue"],   t("overdue"),         "overdue",   "#E07070" if perf["overdue"] else "#7FB069"),
     ]
-    for i, (n, l, col) in enumerate(core):
-        c[i].markdown(f"<div class='metric-card'><p class='metric-n' style='color:{col}'>{n}</p><p class='metric-l'>{l}</p></div>", unsafe_allow_html=True)
+    # Metric-card styling for the clickable boxes (per-box number color)
+    box_css = "".join(
+        f"div.st-key-{k} .stButton>button{{background:#1E281E;border:1px solid #2E3D2E;"
+        f"border-radius:12px;padding:10px 4px 2px;font-size:22px;font-weight:700;"
+        f"color:{col};width:100%;box-shadow:none}}"
+        f"div.st-key-{k} .stButton>button:hover{{border-color:#7FB069;background:#233023}}"
+        for k, _, _, _, col in core)
+    st.markdown(f"<style>{box_css}</style>", unsafe_allow_html=True)
+    cols = st.columns(4)
+    for i, (key, n, label, filt, col) in enumerate(core):
+        with cols[i]:
+            with st.container(key=key):
+                if st.button(f"{n}", key=f"btn_{key}", use_container_width=True):
+                    ss["task_status_f"] = filt
+                    ss["task_scope"] = t("mine")
+                    ss.screen = "tasks"
+                    st.rerun()
+            st.markdown(f"<div style='text-align:center;font-size:11px;color:#9BA58F;margin-top:-6px'>{label}</div>", unsafe_allow_html=True)
 
     # Row 2: completion rate bar + activity
     rate = perf["completion_rate"]
@@ -271,11 +286,38 @@ def home_screen():
 # ── TASKS ────────────────────────────────────────────────────
 def tasks_screen():
     uid, pwd = ss.uid, ss.pwd
-    scope = st.radio("", [t("mine"), t("all")], horizontal=True, label_visibility="collapsed")
+
+    # ── Filter bar ──
+    TASK_FILTERS = {"all": "الكل", "open": "🔵 مفتوحة", "done_week": "✅ أُنجزت هذا الأسبوع",
+                    "urgent": "🔴 عاجلة", "overdue": "⏰ متأخرة"}
+    fc1, fc2 = st.columns([2, 3])
+    scope = fc1.radio("النطاق", [t("mine"), t("all")], horizontal=True,
+                      label_visibility="collapsed", key="task_scope")
+    status_f = fc2.selectbox("الحالة", list(TASK_FILTERS.keys()),
+                             format_func=lambda k: TASK_FILTERS[k], key="task_status_f")
+    query = st.text_input(t("search"), key="task_search", placeholder="اسم المهمة...")
+
     scope_key = "mine" if scope == t("mine") else "all"
     tasks = oc.get_tasks(uid, pwd, scope_key)
 
-    for task in tasks:
+    from datetime import date, timedelta
+    today = str(date.today())
+    week_ago = str(date.today() - timedelta(days=7))
+
+    def keep(tk):
+        done = oc.is_done(tk["stage"])
+        if query and query.lower() not in tk["name"].lower():
+            return False
+        if status_f == "open":      return not done
+        if status_f == "done_week": return done and tk.get("updated", "") >= week_ago
+        if status_f == "urgent":    return tk["priority"] == "1" and not done
+        if status_f == "overdue":   return bool(tk["due"]) and tk["due"] < today and not done
+        return True
+
+    filtered = [tk for tk in tasks if keep(tk)]
+    st.caption(f"{len(filtered)} مهمة")
+
+    for task in filtered:
         done = oc.is_done(task["stage"])
         with st.container():
             c1, c2 = st.columns([5, 1])
