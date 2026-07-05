@@ -111,6 +111,17 @@ st.markdown("""
   /* Label picker: allow wrapping into multiple rows of compact chips. */
   div[class*="st-key-labelpick"] [data-testid="stHorizontalBlock"] {
     flex-wrap:wrap !important; }
+  /* Menu cards (Tags/Sequences/Fields style): taller, icon over label. */
+  div[class*="st-key-btnrow_menucards"] .stButton>button {
+    aspect-ratio:1.3/1; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; white-space:pre-line; font-size:12px;
+    background:#1A231A; border:1px solid #2A3A2A; border-radius:14px; }
+  /* Floating emoji strip: pill row that sits above the composer. */
+  div[class*="st-key-btnrow_emoji"] .stButton>button {
+    background:rgba(127,176,105,.08); border:1px solid transparent; border-radius:50%;
+    aspect-ratio:1/1; font-size:18px; padding:0; min-height:0; }
+  div[class*="st-key-btnrow_emoji"] .stButton>button:hover {
+    background:rgba(127,176,105,.20); border-color:#7FB069; transform:translateY(-2px); }
   .auria-loader{position:fixed;inset:0;background:rgba(20,27,20,.78);display:none;align-items:center;justify-content:center;z-index:99999}
   body:has([data-testid="stStatusWidget"]) .auria-loader{display:flex}
   .auria-loader img{width:70px;height:70px;border-radius:50%;animation:apulse 1.1s ease-in-out infinite;box-shadow:0 0 34px rgba(127,176,105,.35)}
@@ -1679,17 +1690,15 @@ def _cs_inbox(uid, pwd):
 
     convs = oc.get_conversations(uid, pwd, channel_f, status_f)
 
-    # One-time CSS: turn each conversation button into a rich, tappable row
+    # ManyChat-style inbox rows: avatar circle, name, preview, time, unread dot
     st.markdown("""<style>
     .conv-row .stButton>button {
-        background:#1A231A; border:1px solid #2A3A2A; border-radius:12px;
-        padding:11px 14px; width:100%; text-align:right; color:#E8E4D6;
-        white-space:pre-line; line-height:1.5; font-weight:400;
-        min-height:0; transition:all .12s;
-    }
-    .conv-row .stButton>button:hover {
-        background:#22301F; border-color:#7FB069; }
-    .conv-row.unread .stButton>button { border-inline-start:3px solid #E07070; }
+        background:transparent; border:none; border-bottom:1px solid #1E281E;
+        border-radius:0; padding:12px 6px; width:100%; text-align:right; color:#E8E4D6;
+        white-space:pre-line; line-height:1.5; font-weight:400; min-height:0;
+        transition:background .12s; }
+    .conv-row .stButton>button:hover { background:rgba(127,176,105,.06); }
+    .conv-row.unread .stButton>button { font-weight:600; }
     </style>""", unsafe_allow_html=True)
 
     if not convs:
@@ -1697,27 +1706,24 @@ def _cs_inbox(uid, pwd):
 
     for c in convs:
         m = oc.CHANNEL_META.get(c["channel"], {"icon": "•", "color": "#888", "ar": ""})
-        status_dot = {"open": "🟢", "answered": "🔵", "closed": "⚪"}.get(c["status"], "")
         prefix = "↩️ " if c["last_dir"] == "out" else ""
-        unread_txt = f"  🔴{c['unread']}" if c["unread"] else ""
-        # Compact preview
-        preview = (c["preview"] or "")[:42]
-        # Whole row is one button — label carries name, time, preview
-        label = (f"{m['icon']} {c['customer']}{unread_txt}   ·   {c['time'][-5:]}\n"
-                 f"{status_dot} {prefix}{preview}")
+        dot = " 🔵" if c["unread"] else ""
+        preview = (c["preview"] or "")[:38]
+        # Name line with channel icon + time; preview below; unread dot
+        label = (f"{m['icon']}  {c['customer']}{dot}      {c['time'][-5:]}\n"
+                 f"{prefix}{preview}")
         row_cls = "conv-row unread" if c["unread"] else "conv-row"
         with st.container(key=f"convrow_{c['id']}"):
             st.markdown(f"<div class='{row_cls}'></div>", unsafe_allow_html=True)
             if st.button(label, key=f"conv_{c['id']}", use_container_width=True):
                 ss.chat_open = c["id"]; st.rerun()
-        # Label chips (only if present) — compact, below the row
         clabels = oc.get_conversation_labels(uid, pwd, c["id"])
         if clabels:
             chips = "".join(
                 f"<span style='background:{l['color']}22;color:{l['color']};padding:1px 8px;"
                 f"border-radius:10px;font-size:9px;margin-inline-end:3px'>{l['name']}</span>"
                 for l in clabels)
-            st.markdown(f"<div style='margin:-4px 0 8px 4px'>{chips}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='margin:-8px 0 4px 4px'>{chips}</div>", unsafe_allow_html=True)
 
     # Secondary tools — tickets + order lookup, tucked away
     with st.expander("🎫 التذاكر وحالة الطلب"):
@@ -1743,120 +1749,165 @@ def _cs_inbox(uid, pwd):
 
 
 def _chat_view(uid, pwd, conv_id):
-    if st.button("← المحادثات"):
-        ss.chat_open = None; st.rerun()
     head = oc.get_conversation_head(uid, pwd, conv_id)
     if not head:
         st.error("غير موجود"); return
     m = oc.CHANNEL_META.get(head["channel"], {"icon": "•", "ar": "", "color": "#888"})
-
-    # ── Header: customer + channel + labels ──
     conv_labels = oc.get_conversation_labels(uid, pwd, conv_id)
+
+    # ── Minimal header (ManyChat img 2): back · name/handle · menu ──
+    hc1, hc2, hc3 = st.columns([1, 5, 1])
+    with hc1:
+        if st.button("←", key=f"chatback_{conv_id}"):
+            ss.chat_open = None; st.rerun()
+    with hc2:
+        st.markdown(
+            f"<div style='padding-top:4px'><div style='font-size:16px;font-weight:700;color:#F5F1E6'>{head['customer']}</div>"
+            f"<div style='font-size:11px;color:#9BA58F'>{head['handle'] or 'غير مُعيّن'}</div></div>",
+            unsafe_allow_html=True)
+    with hc3:
+        if st.button("⋮", key=f"chatmenu_{conv_id}"):
+            ss[f"show_menu_{conv_id}"] = not ss.get(f"show_menu_{conv_id}", False)
+
+    # Channel pill (like the TIKTOK pill)
     label_chips = "".join(
-        f"<span style='background:{l['color']}22;color:{l['color']};padding:2px 8px;"
+        f"<span style='background:{l['color']}22;color:{l['color']};padding:2px 9px;"
         f"border-radius:12px;font-size:10px;margin-inline-end:4px'>{l['name']}</span>"
         for l in conv_labels)
-    st.markdown(f"""<div class='greeting'>
-        <div style='display:flex;justify-content:space-between;align-items:center'>
-          <div><div style='font-size:17px;font-weight:700'>{head['customer']}</div>
-          <div style='font-size:12px;opacity:.6'>{head['handle']}</div></div>
-          <span style='background:{m['color']}22;color:{m['color']};padding:4px 12px;border-radius:20px;font-size:12px'>{m['icon']} {m['ar']}</span>
-        </div>
-        <div style='margin-top:6px'>{label_chips}</div>
-    </div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='margin:6px 0 4px'>"
+        f"<span style='background:#F5F1E6;color:#1F2A1F;padding:4px 14px;border-radius:20px;"
+        f"font-size:12px;font-weight:700'>{m['icon']} {m['ar']}</span>"
+        f"<span style='margin-inline-start:6px'>{label_chips}</span></div>",
+        unsafe_allow_html=True)
 
-    # ── Action toolbar: labels · remind · done · unread ──
-    with st.container(key=f"btnrow_chattools_{conv_id}"):
-        ac1, ac2, ac3, ac4 = st.columns(4)
-        if ac1.button("🏷️ تصنيف", key=f"lbl_{conv_id}", use_container_width=True):
-            ss[f"show_labels_{conv_id}"] = not ss.get(f"show_labels_{conv_id}", False)
-        if ac2.button("⏰ ذكّرني", key=f"rem_{conv_id}", use_container_width=True):
-            ss[f"show_remind_{conv_id}"] = not ss.get(f"show_remind_{conv_id}", False)
-        if ac3.button("✅ إنهاء", key=f"done_{conv_id}", use_container_width=True):
+    # ── Action menu (ManyChat img 3): summoned card, not stacked bars ──
+    if ss.get(f"show_menu_{conv_id}"):
+        st.markdown(
+            "<div style='background:#141B14;border:1px solid #2A3A2A;border-radius:16px 16px 0 0;"
+            "padding:14px 12px 6px;margin-top:4px'>"
+            "<div style='font-size:16px;font-weight:800;color:#F5F1E6;margin-bottom:10px'>القائمة</div></div>",
+            unsafe_allow_html=True)
+        # Top cards: label / remind / done  (like Tags/Sequences/Fields)
+        with st.container(key=f"btnrow_menucards_{conv_id}"):
+            mc1, mc2, mc3 = st.columns(3)
+            if mc1.button("🏷️\nتصنيف", key=f"lbl_{conv_id}", use_container_width=True):
+                ss[f"show_labels_{conv_id}"] = not ss.get(f"show_labels_{conv_id}", False); st.rerun()
+            if mc2.button("⏰\nذكّرني", key=f"rem_{conv_id}", use_container_width=True):
+                ss[f"show_remind_{conv_id}"] = not ss.get(f"show_remind_{conv_id}", False); st.rerun()
+            if mc3.button("👤\nتعيين", key=f"asn_{conv_id}", use_container_width=True):
+                ss[f"show_assign_{conv_id}"] = not ss.get(f"show_assign_{conv_id}", False); st.rerun()
+        # Action list rows
+        if st.button("✅  وضع علامة منجز", key=f"done_{conv_id}", use_container_width=True):
             oc.mark_conversation_status(uid, pwd, conv_id, "closed")
-            st.success("تم وضع علامة منجز"); ss.chat_open = None; st.rerun()
-        if ac4.button("📩 غير مقروء", key=f"unr_{conv_id}", use_container_width=True):
+            st.success("تم"); ss.chat_open = None; st.rerun()
+        if st.button("📩  وضع كغير مقروء", key=f"unr_{conv_id}", use_container_width=True):
             oc.mark_unread(uid, pwd, conv_id, True)
-            st.success("وُضع كغير مقروء"); ss.chat_open = None; st.rerun()
+            st.success("تم"); ss.chat_open = None; st.rerun()
 
-    # Label picker (toggle panel)
-    if ss.get(f"show_labels_{conv_id}"):
-        labs = oc.get_labels(uid, pwd)
-        applied = {l["id"] for l in conv_labels}
-        st.caption("اختر التصنيفات:")
-        with st.container(key=f"btnrow_labelpick_{conv_id}"):
-            lcols = st.columns(3)
-            for i, l in enumerate(labs):
-                mark = "✓ " if l["id"] in applied else ""
-                if lcols[i % 3].button(f"{mark}{l['name']}", key=f"togglbl_{conv_id}_{l['id']}", use_container_width=True):
-                    oc.toggle_conversation_label(uid, pwd, conv_id, l["id"]); st.rerun()
+        # Label picker (opens under the menu)
+        if ss.get(f"show_labels_{conv_id}"):
+            labs = oc.get_labels(uid, pwd)
+            applied = {l["id"] for l in conv_labels}
+            st.caption("اختر التصنيفات:")
+            with st.container(key=f"btnrow_labelpick_{conv_id}"):
+                lcols = st.columns(3)
+                for i, l in enumerate(labs):
+                    mark = "✓ " if l["id"] in applied else ""
+                    if lcols[i % 3].button(f"{mark}{l['name']}", key=f"togglbl_{conv_id}_{l['id']}", use_container_width=True):
+                        oc.toggle_conversation_label(uid, pwd, conv_id, l["id"]); st.rerun()
 
-    # Reminder panel
-    if ss.get(f"show_remind_{conv_id}"):
-        from datetime import date, timedelta
-        st.caption("ذكّرني بهذه المحادثة:")
-        rc1, rc2 = st.columns(2)
-        when = rc1.selectbox("متى", ["خلال ساعة", "بعد 3 ساعات", "غداً صباحاً", "بعد يومين"],
-                             key=f"remwhen_{conv_id}")
-        rnote = rc2.text_input("ملاحظة", key=f"remnote_{conv_id}", placeholder="سبب التذكير")
-        if st.button("ضبط التذكير", key=f"setrem_{conv_id}", use_container_width=True, type="primary"):
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            delta = {"خلال ساعة": timedelta(hours=1), "بعد 3 ساعات": timedelta(hours=3),
-                     "غداً صباحاً": timedelta(days=1), "بعد يومين": timedelta(days=2)}[when]
-            when_dt = (now + delta).strftime("%Y-%m-%d %H:%M:%S")
-            oc.set_reminder(uid, pwd, conv_id, when_dt, rnote)
-            st.success("تم ضبط التذكير ⏰"); ss[f"show_remind_{conv_id}"] = False; st.rerun()
+        # Reminder panel
+        if ss.get(f"show_remind_{conv_id}"):
+            from datetime import timedelta, datetime, timezone
+            st.caption("ذكّرني بهذه المحادثة:")
+            rc1, rc2 = st.columns(2)
+            when = rc1.selectbox("متى", ["خلال ساعة", "بعد 3 ساعات", "غداً صباحاً", "بعد يومين"],
+                                 key=f"remwhen_{conv_id}", label_visibility="collapsed")
+            rnote = rc2.text_input("ملاحظة", key=f"remnote_{conv_id}", placeholder="سبب التذكير", label_visibility="collapsed")
+            if st.button("ضبط التذكير", key=f"setrem_{conv_id}", use_container_width=True, type="primary"):
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                delta = {"خلال ساعة": timedelta(hours=1), "بعد 3 ساعات": timedelta(hours=3),
+                         "غداً صباحاً": timedelta(days=1), "بعد يومين": timedelta(days=2)}[when]
+                when_dt = (now + delta).strftime("%Y-%m-%d %H:%M:%S")
+                oc.set_reminder(uid, pwd, conv_id, when_dt, rnote)
+                st.success("تم ضبط التذكير ⏰"); ss[f"show_remind_{conv_id}"] = False; st.rerun()
+        st.markdown("<hr style='margin:8px 0;border-color:#2A3A2A'>", unsafe_allow_html=True)
 
-    # ── Message stream: text, notes, images ──
-    st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
+    # ── Message stream (ManyChat img 2: clean bubbles) ──
+    st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
     msgs = oc.get_messages(uid, pwd, conv_id)
+    last_day = None
     for msg in msgs:
+        # Day separator
+        day = msg["time"][:10] if msg.get("time") else ""
+        if day and day != last_day:
+            st.markdown(f"<div style='text-align:center;color:#6A7A6A;font-size:11px;margin:10px 0'>{day}</div>", unsafe_allow_html=True)
+            last_day = day
         if msg.get("is_note"):
-            # Internal note — distinct amber style, not sent to customer
             st.markdown(
                 f"<div style='display:flex;justify-content:center;margin:6px 0'>"
                 f"<div style='background:rgba(212,168,83,.12);border:1px dashed rgba(212,168,83,.4);"
-                f"border-radius:10px;padding:6px 12px;max-width:85%;font-size:12px;color:#D4A853'>"
+                f"border-radius:12px;padding:6px 12px;max-width:85%;font-size:12px;color:#D4A853'>"
                 f"📝 <b>ملاحظة داخلية</b> · {msg['agent'] or ''}<br>{msg['body']}</div></div>",
                 unsafe_allow_html=True)
         elif msg["direction"] == "in":
-            img = f"<img src='data:image/jpeg;base64,{msg['image']}' style='max-width:180px;border-radius:8px;margin-top:4px'/>" if msg.get("image") else ""
-            bubble = (f"<div style='display:flex;justify-content:flex-start;margin:4px 0'>"
-                      f"<div style='background:#1E281E;border:1px solid #2E3D2E;border-radius:14px 14px 14px 4px;padding:8px 12px;max-width:78%'>"
-                      f"<div style='font-size:13px'>{msg['body']}</div>{img}"
-                      f"<div style='font-size:9px;opacity:.4;margin-top:3px'>{msg['time'][-5:]}</div></div></div>")
-            st.markdown(bubble, unsafe_allow_html=True)
+            img = f"<img src='data:image/jpeg;base64,{msg['image']}' style='max-width:180px;border-radius:10px;margin-top:4px'/>" if msg.get("image") else ""
+            st.markdown(
+                f"<div style='display:flex;justify-content:flex-start;margin:5px 0'>"
+                f"<div style='background:#232D23;border-radius:16px 16px 16px 5px;padding:9px 13px;max-width:80%'>"
+                f"<div style='font-size:13px;color:#E8E4D6'>{msg['body']}</div>{img}"
+                f"<div style='font-size:9px;color:#6A7A6A;margin-top:3px'>{msg['time'][-5:]}</div></div></div>",
+                unsafe_allow_html=True)
         else:
             agent = f" · {msg['agent']}" if msg["agent"] else ""
-            img = f"<img src='data:image/jpeg;base64,{msg['image']}' style='max-width:180px;border-radius:8px;margin-top:4px'/>" if msg.get("image") else ""
-            bubble = (f"<div style='display:flex;justify-content:flex-end;margin:4px 0'>"
-                      f"<div style='background:rgba(127,176,105,.16);border:1px solid rgba(127,176,105,.3);border-radius:14px 14px 4px 14px;padding:8px 12px;max-width:78%'>"
-                      f"<div style='font-size:13px'>{msg['body']}</div>{img}"
-                      f"<div style='font-size:9px;opacity:.4;margin-top:3px;text-align:left'>{msg['time'][-5:]}{agent}</div></div></div>")
-            st.markdown(bubble, unsafe_allow_html=True)
+            img = f"<img src='data:image/jpeg;base64,{msg['image']}' style='max-width:180px;border-radius:10px;margin-top:4px'/>" if msg.get("image") else ""
+            st.markdown(
+                f"<div style='display:flex;justify-content:flex-end;margin:5px 0'>"
+                f"<div style='background:rgba(127,176,105,.18);border-radius:16px 16px 5px 16px;padding:9px 13px;max-width:80%'>"
+                f"<div style='font-size:13px;color:#F5F1E6'>{msg['body']}</div>{img}"
+                f"<div style='font-size:9px;color:#7A8A6A;margin-top:3px;text-align:left'>{msg['time'][-5:]}{agent}</div></div></div>",
+                unsafe_allow_html=True)
 
-    # ── Composer: Reply / Note tabs, canned, emoji, image ──
-    st.markdown("<hr style='margin:10px 0'>", unsafe_allow_html=True)
-    tab_reply, tab_note = st.tabs(["💬 رد", "📝 ملاحظة داخلية"])
+    # ── Composer (ManyChat img 2 + 4): floating emoji, + for send options ──
+    st.markdown("<hr style='margin:10px 0;border-color:#2A3A2A'>", unsafe_allow_html=True)
 
-    with tab_reply:
-        # Canned responses
+    reply_mode = st.radio("وضع", ["💬 رد", "📝 ملاحظة"], key=f"chatmode_{conv_id}",
+                          horizontal=True, label_visibility="collapsed")
+    is_note_mode = reply_mode == "📝 ملاحظة"
+
+    # Send-options toggle (the "+" → canned / photo, ManyChat img 4)
+    oc1, oc2 = st.columns([1, 6])
+    with oc1:
+        if st.button("➕", key=f"sendopts_{conv_id}"):
+            ss[f"show_sendopts_{conv_id}"] = not ss.get(f"show_sendopts_{conv_id}", False)
+    with oc2:
+        st.markdown("<div style='font-size:11px;color:#9BA58F;padding-top:9px'>ردود جاهزة · صورة · إيموجي</div>", unsafe_allow_html=True)
+
+    if ss.get(f"show_sendopts_{conv_id}") and not is_note_mode:
         cans = _cached_canned(uid, pwd)
-        with st.expander("⚡ ردود جاهزة"):
-            for c in cans:
-                if st.button(f"{c['title']} · {c['shortcut']}", key=f"can_{conv_id}_{c['id']}", use_container_width=True):
-                    ss[f"chat_draft_{conv_id}"] = c["body"]; st.rerun()
-        # Emoji quick-insert
-        emojis = ["🌿", "💚", "✨", "🙏", "😊", "🚚", "❤️", "🌸"]
-        with st.container(key=f"btnrow_emoji_{conv_id}"):
-            ecols = st.columns(len(emojis))
-            for i, e in enumerate(emojis):
-                if ecols[i].button(e, key=f"emo_{conv_id}_{i}"):
-                    ss[f"chat_draft_{conv_id}"] = ss.get(f"chat_draft_{conv_id}", "") + e; st.rerun()
-        reply = st.text_area("اكتب رداً...", value=ss.get(f"chat_draft_{conv_id}", ""),
+        st.caption("⭐ ردود جاهزة")
+        with st.container(key=f"btnrow_canned_{conv_id}"):
+            cc = st.columns(2)
+            for i, c in enumerate(cans):
+                if cc[i % 2].button(f"{c['title']}", key=f"can_{conv_id}_{c['id']}", use_container_width=True):
+                    ss[f"chat_draft_{conv_id}"] = c["body"]
+                    ss[f"show_sendopts_{conv_id}"] = False; st.rerun()
+
+    # Floating emoji strip
+    emojis = ["🌿", "💚", "✨", "🙏", "😊", "🚚", "❤️", "🌸"]
+    st.markdown("<div class='emoji-float'>", unsafe_allow_html=True)
+    with st.container(key=f"btnrow_emoji_{conv_id}"):
+        ecols = st.columns(len(emojis))
+        for i, e in enumerate(emojis):
+            if ecols[i].button(e, key=f"emo_{conv_id}_{i}"):
+                ss[f"chat_draft_{conv_id}"] = ss.get(f"chat_draft_{conv_id}", "") + e; st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if not is_note_mode:
+        reply = st.text_area("اكتب رسالة...", value=ss.get(f"chat_draft_{conv_id}", ""),
                              key=f"chat_reply_{conv_id}", label_visibility="collapsed",
-                             placeholder="اكتب رداً...", height=80)
+                             placeholder="اكتب رسالة...", height=70)
         img = st.file_uploader("📎 صورة", type=["png", "jpg", "jpeg"], key=f"chat_img_{conv_id}")
         if st.button(f"إرسال إلى {m['ar']} ➤", type="primary", use_container_width=True, key=f"chat_send_{conv_id}"):
             image_b64 = None
@@ -1867,11 +1918,9 @@ def _chat_view(uid, pwd, conv_id):
                 oc.send_reply_full(uid, pwd, conv_id, reply, is_note=False, image_b64=image_b64)
                 ss[f"chat_draft_{conv_id}"] = ""
                 st.rerun()
-
-    with tab_note:
-        st.caption("الملاحظات الداخلية لا تُرسل للعميل — للفريق فقط")
-        note = st.text_area("ملاحظة...", key=f"chat_note_{conv_id}",
-                            label_visibility="collapsed", placeholder="ملاحظة للفريق...", height=80)
+    else:
+        note = st.text_area("ملاحظة للفريق...", key=f"chat_note_{conv_id}",
+                            label_visibility="collapsed", placeholder="ملاحظة للفريق (لا تُرسل للعميل)...", height=70)
         if st.button("حفظ الملاحظة", use_container_width=True, key=f"chat_savenote_{conv_id}"):
             if note.strip():
                 oc.send_reply_full(uid, pwd, conv_id, note, is_note=True)
