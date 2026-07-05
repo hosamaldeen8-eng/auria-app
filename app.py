@@ -1755,20 +1755,23 @@ def _chat_view(uid, pwd, conv_id):
     m = oc.CHANNEL_META.get(head["channel"], {"icon": "•", "ar": "", "color": "#888"})
     conv_labels = oc.get_conversation_labels(uid, pwd, conv_id)
 
-    # ── Minimal header (ManyChat img 2): back · name/handle · menu ──
-    hc1, hc2, hc3 = st.columns([1, 5, 1])
-    with hc1:
-        if st.button("←", key=f"chatback_{conv_id}"):
-            ss.chat_open = None; st.rerun()
-    with hc2:
-        st.markdown(
-            f"<div style='padding-top:4px'><div style='font-size:16px;font-weight:700;color:#F5F1E6'>{head['customer']}</div>"
-            f"<div style='font-size:11px;color:#9BA58F'>{head['handle'] or 'غير مُعيّن'}</div></div>",
-            unsafe_allow_html=True)
-    with hc3:
-        if st.button("⋮", key=f"chatmenu_{conv_id}"):
-            ss[f"show_menu_{conv_id}"] = not ss.get(f"show_menu_{conv_id}", False)
-
+    # ── Minimal header (ManyChat img 2): menu · name/handle · back ──
+    # RTL: menu (⋮) sits on the right, back (←) on the left. Wrapped so the
+    # row stays horizontal on phones instead of stacking.
+    with st.container(key=f"btnrow_chathdr_{conv_id}"):
+        hc1, hc2, hc3 = st.columns([1, 5, 1])
+        with hc1:
+            if st.button("⋮", key=f"chatmenu_{conv_id}"):
+                ss[f"show_menu_{conv_id}"] = not ss.get(f"show_menu_{conv_id}", False)
+        with hc2:
+            st.markdown(
+                f"<div style='padding-top:4px;text-align:center'>"
+                f"<div style='font-size:16px;font-weight:700;color:#F5F1E6'>{head['customer']}</div>"
+                f"<div style='font-size:11px;color:#9BA58F'>{head['handle'] or 'غير مُعيّن'}</div></div>",
+                unsafe_allow_html=True)
+        with hc3:
+            if st.button("←", key=f"chatback_{conv_id}"):
+                ss.chat_open = None; st.rerun()
     # Channel pill (like the TIKTOK pill)
     label_chips = "".join(
         f"<span style='background:{l['color']}22;color:{l['color']};padding:2px 9px;"
