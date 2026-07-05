@@ -108,6 +108,10 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
+  /* Chat header: reverse column order for RTL so ⋮ menu is on the right
+     and ← back is on the left. */
+  div[class*="st-key-btnrow_chathdr"] [data-testid="stHorizontalBlock"] {
+    flex-direction: row-reverse !important; }
   /* Label picker: allow wrapping into multiple rows of compact chips. */
   div[class*="st-key-labelpick"] [data-testid="stHorizontalBlock"] {
     flex-wrap:wrap !important; }
