@@ -539,6 +539,43 @@ def create_expense(uid, pwd, category_id, description, amount, photo_bytes=None,
         return False, _clean_odoo_error(e)
 
 
+# ── PENDING STOCK MOVEMENTS (production oversight) ───────────
+def get_pending_movements(uid, pwd):
+    """Unfinalized transfers + PO receipts awaiting action, for the
+    production home tab. Returns two lists with per-line context."""
+    PSTATE = {"assigned": ("جاهز", "#7FB069"), "confirmed": ("بانتظار", "#D4A853"),
+              "waiting": ("ينتظر عملية", "#9BA58F"), "draft": ("مسودة", "#9BA58F")}
+
+    def _pack(p):
+        loc = p["location_id"][1].split("/")[-1] if p.get("location_id") else "?"
+        dest = p["location_dest_id"][1].split("/")[-1] if p.get("location_dest_id") else "?"
+        label, color = PSTATE.get(p["state"], (p["state"], "#9BA58F"))
+        return {
+            "id": p["id"], "name": p["name"],
+            "state": p["state"], "state_ar": label, "color": color,
+            "route": f"{loc} → {dest}",
+            "type": p["picking_type_id"][1].split(":")[-1].strip() if p.get("picking_type_id") else "",
+            "partner": p["partner_id"][1] if p.get("partner_id") else "",
+            "origin": p.get("origin") or "",
+            "date": (p.get("scheduled_date") or "")[:10],
+        }
+
+    transfers = odoo(uid, pwd, "stock.picking", "search_read",
+        [[["picking_type_id.code", "=", "internal"], ["state", "not in", ["done", "cancel"]]]],
+        {"fields": ["id", "name", "state", "picking_type_id", "location_id",
+                    "location_dest_id", "scheduled_date"],
+         "limit": 40, "order": "scheduled_date asc"})
+    receipts = odoo(uid, pwd, "stock.picking", "search_read",
+        [[["picking_type_id.code", "=", "incoming"], ["state", "not in", ["done", "cancel"]]]],
+        {"fields": ["id", "name", "state", "partner_id", "origin", "scheduled_date",
+                    "picking_type_id", "location_id", "location_dest_id"],
+         "limit": 40, "order": "scheduled_date asc"})
+    return {
+        "transfers": [_pack(p) for p in transfers],
+        "receipts": [_pack(p) for p in receipts],
+    }
+
+
 def get_pending_receipts(uid, pwd):
     """Incoming purchase receipts waiting to be received (Partner → RM-Receiving)."""
     picks = odoo(uid, pwd, "stock.picking", "search_read",

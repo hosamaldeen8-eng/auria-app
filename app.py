@@ -284,6 +284,57 @@ def home_screen():
         for i, (label, val) in enumerate(kpis):
             cols[i].markdown(f"<div class='metric-card'><p class='metric-n' style='color:#7FB069'>{val}</p><p class='metric-l'>{label}</p></div>", unsafe_allow_html=True)
 
+    # ── Production: pending stock movements ──
+    if info["dept"] in ("production", "management"):
+        pend = oc.get_pending_movements(uid, pwd)
+        n_tr, n_rc = len(pend["transfers"]), len(pend["receipts"])
+        st.markdown(f"**الحركات غير المُنجزة** <span style='opacity:.5;font-size:11px'>({n_tr} تحويل · {n_rc} استلام)</span>", unsafe_allow_html=True)
+        pt1, pt2 = st.tabs([f"🔄 تحويلات ({n_tr})", f"📥 استلامات PO ({n_rc})"])
+
+        with pt1:
+            if not pend["transfers"]:
+                st.caption("لا توجد تحويلات معلّقة")
+            for m in pend["transfers"]:
+                card = (
+                    "<div class='task-row' style='margin-bottom:4px'>"
+                    "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    f"<span style='font-family:monospace;font-size:11px;color:#D4A853'>{m['name']}</span>"
+                    f"<span style='color:{m['color']};font-size:11px;font-weight:600'>{m['state_ar']}</span>"
+                    "</div>"
+                    f"<div style='font-size:12px;margin-top:5px'>{m['type']}</div>"
+                    f"<div style='font-size:11px;opacity:.6;margin-top:2px'>{m['route']} · {m['date']}</div>"
+                    "</div>"
+                )
+                st.markdown(card, unsafe_allow_html=True)
+                if m["state"] == "assigned":
+                    if st.button("✅ إنهاء التحويل", key=f"fintr_{m['id']}", use_container_width=True):
+                        ok, msg = oc.validate_picking(uid, pwd, m["id"])
+                        _flash(ok, msg)
+                        if ok: st.rerun()
+                st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
+
+        with pt2:
+            if not pend["receipts"]:
+                st.caption("لا توجد استلامات معلّقة")
+            for m in pend["receipts"]:
+                card = (
+                    "<div class='task-row' style='margin-bottom:4px'>"
+                    "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    f"<span style='font-family:monospace;font-size:11px;color:#D4A853'>{m['name']}</span>"
+                    f"<span style='color:{m['color']};font-size:11px;font-weight:600'>{m['state_ar']}</span>"
+                    "</div>"
+                    f"<div style='font-weight:700;margin:6px 0 3px'>{m['partner']}</div>"
+                    f"<div style='font-size:11px;opacity:.6'>{m['origin']} · {m['date']}</div>"
+                    "</div>"
+                )
+                st.markdown(card, unsafe_allow_html=True)
+                if m["state"] == "assigned":
+                    if st.button("📥 استلام كامل", key=f"finrc_{m['id']}", use_container_width=True):
+                        ok, msg = oc.validate_picking(uid, pwd, m["id"])
+                        _flash(ok, msg)
+                        if ok: st.rerun()
+                st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
+
     # ── My performance (deep) ──
     st.markdown(f"**{t('my_performance')}**")
     perf = oc.get_my_performance(uid, pwd)
