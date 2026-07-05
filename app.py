@@ -252,6 +252,8 @@ def nav():
     if dept in ("production","procurement","operations","creative","cs"):
         icons = {"production":"📦","procurement":"🛒","operations":"🚚","creative":"🎨","cs":"💬"}
         tabs.append((dept, icons[dept], t(dept)))
+    if dept in ("management", "cs"):
+        tabs.append(("sales", "🧾", "المبيعات"))
     tabs += [("tasks", "✅", t("tasks")), ("report", "📝", t("report")), ("profile", "👤", t("profile"))]
 
     with st.container(key="topnav"):
