@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 12
+CLIENT_VERSION = 13
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1289,6 +1289,60 @@ def so_confirm(uid, pwd, so_id):
 
 
 # ── SALES ORDER CREATION + shipment generation ───────────────
+def search_customers(uid, pwd, query):
+    """Live search across ALL Odoo contacts by phone or name.
+    Normalizes digits so '944' matches '+218 94-4904735', '094...', etc.
+    Returns up to 20 matches, most relevant first."""
+    query = (query or "").strip()
+    if len(query) < 2:
+        return []
+    digits = "".join(ch for ch in query if ch.isdigit())
+    domain = []
+    if digits and len(digits) >= 3:
+        # Phone search: match on the raw digits. Odoo stores formatted numbers,
+        # so we ilike the digit run; also try name in case they typed a name.
+        domain = ["|", "|", "|",
+                  ["phone", "ilike", digits],
+                  ["mobile", "ilike", digits],
+                  ["name", "ilike", query],
+                  ["phone_sanitized", "ilike", digits]] if _has_sanitized(uid, pwd) else \
+                 ["|", "|",
+                  ["phone", "ilike", digits],
+                  ["mobile", "ilike", digits],
+                  ["name", "ilike", query]]
+    else:
+        domain = [["name", "ilike", query]]
+    custs = odoo(uid, pwd, "res.partner", "search_read", [domain],
+        {"fields": ["id", "name", "mobile", "phone"], "limit": 20, "order": "name"})
+    # If digits given but formatting split them (e.g. '944-904' vs '944904'),
+    # do a second pass matching normalized stored digits in Python.
+    if digits and len(digits) >= 4 and len(custs) < 20:
+        seen = {c["id"] for c in custs}
+        extra = odoo(uid, pwd, "res.partner", "search_read",
+            [["|", ["mobile", "ilike", digits[:6]], ["phone", "ilike", digits[:6]]]],
+            {"fields": ["id", "name", "mobile", "phone"], "limit": 20})
+        for c in extra:
+            if c["id"] in seen:
+                continue
+            stored = "".join(ch for ch in (c.get("mobile") or c.get("phone") or "") if ch.isdigit())
+            if digits in stored:
+                custs.append(c)
+    return [{"id": c["id"], "name": c["name"] or "—",
+             "mobile": c.get("mobile") or c.get("phone") or ""} for c in custs[:20]]
+
+
+_SANITIZED_CACHE = {}
+def _has_sanitized(uid, pwd):
+    """Cache whether phone_sanitized field exists (base_phone module)."""
+    if "v" not in _SANITIZED_CACHE:
+        try:
+            f = odoo(uid, pwd, "res.partner", "fields_get", ["phone_sanitized"], {})
+            _SANITIZED_CACHE["v"] = "phone_sanitized" in f
+        except Exception:
+            _SANITIZED_CACHE["v"] = False
+    return _SANITIZED_CACHE["v"]
+
+
 def get_customers(uid, pwd, query=""):
     domain = [["customer_rank", ">", 0]]
     if query:

@@ -102,7 +102,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 12
+APP_EXPECTS_CLIENT = 13
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -120,6 +120,7 @@ ss.setdefault("po_open", None)
 ss.setdefault("so_open", None)
 ss.setdefault("chat_open", None)
 ss.setdefault("so_lines", [])
+ss.setdefault("so_selected_cust", None)
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -1179,18 +1180,45 @@ def sales_screen():
 
 
 def _create_so_form(uid, pwd):
-    # Customer
-    custs = oc.get_customers(uid, pwd)
-    cust_labels = [f"{c['name']} · {c['mobile']}" for c in custs] + ["➕ عميل جديد"]
-    ci = st.selectbox("العميل", range(len(cust_labels)),
-                      format_func=lambda i: cust_labels[i], key="so_cust")
+    # ── Customer: live search across ALL Odoo contacts by phone/name ──
+    st.markdown("<div style='font-size:12px;opacity:.7'>👤 العميل</div>", unsafe_allow_html=True)
+    cust_q = st.text_input("ابحث برقم الهاتف أو الاسم", key="so_cust_q",
+                           placeholder="اكتب رقم الهاتف أو الاسم...", label_visibility="collapsed")
+    customer_id = None
     new_cust = None
-    if ci == len(custs):  # new customer
-        nc1, nc2 = st.columns(2)
-        nc_name = nc1.text_input("اسم العميل", key="so_nc_name")
-        nc_mobile = nc2.text_input("الجوال", key="so_nc_mobile", placeholder="+218 9X XXXXXXX")
-        nc_addr = st.text_input("العنوان", key="so_nc_addr")
-        new_cust = (nc_name, nc_mobile, nc_addr)
+
+    if "so_selected_cust" not in ss:
+        ss.so_selected_cust = None
+
+    if ss.so_selected_cust:
+        # A customer is chosen — show it with a change button
+        sc = ss.so_selected_cust
+        cc1, cc2 = st.columns([4, 1])
+        cc1.markdown(f"<div class='task-row' style='padding:8px 12px'>✅ <b>{sc['name']}</b> · {sc['mobile']}</div>", unsafe_allow_html=True)
+        if cc2.button("تغيير", key="so_cust_change", use_container_width=True):
+            ss.so_selected_cust = None; st.rerun()
+        customer_id = sc["id"]
+    elif cust_q and len(cust_q.strip()) >= 2:
+        matches = oc.search_customers(uid, pwd, cust_q)
+        if matches:
+            st.caption(f"{len(matches)} نتيجة — اختر العميل")
+            for m in matches:
+                if st.button(f"{m['name']} · {m['mobile']}", key=f"pickcust_{m['id']}", use_container_width=True):
+                    ss.so_selected_cust = m; st.rerun()
+        else:
+            # No contact found → offer create new
+            st.info("لا يوجد عميل بهذا الرقم — أنشئ عميلاً جديداً")
+            digits = "".join(ch for ch in cust_q if ch.isdigit())
+            nc_name = st.text_input("اسم العميل", key="so_nc_name")
+            nc_mobile = st.text_input("الجوال", key="so_nc_mobile",
+                                      value=cust_q if digits else "",
+                                      placeholder="+218 9X XXXXXXX")
+            nc_addr = st.text_input("العنوان (اختياري)", key="so_nc_addr")
+            new_cust = (nc_name, nc_mobile, nc_addr)
+    else:
+        st.caption("ابدأ بكتابة رقم الهاتف أو الاسم للبحث في جهات الاتصال")
+
+    st.markdown("<hr style='margin:10px 0'>", unsafe_allow_html=True)
 
     # Products
     prods = oc.get_sellable_products(uid, pwd)
@@ -1229,8 +1257,10 @@ def _create_so_form(uid, pwd):
     if cc2.button("✅ إنشاء الطلب", key="so_create", type="primary", use_container_width=True):
         if not ss.so_lines:
             st.error("أضف منتجاً واحداً على الأقل")
+        elif customer_id is None and new_cust is None:
+            st.error("ابحث عن العميل واختره، أو أنشئ عميلاً جديداً")
         else:
-            # Resolve customer (existing or new)
+            # Resolve customer (selected existing or new)
             if new_cust is not None:
                 if not new_cust[0].strip() or not new_cust[1].strip():
                     st.error("أدخل اسم العميل والجوال"); return
@@ -1238,13 +1268,12 @@ def _create_so_form(uid, pwd):
                 if not ok:
                     st.error(cid); return
                 customer_id = cid
-            else:
-                customer_id = custs[ci]["id"]
             lines = [(l["pid"], l["qty"], l["price"]) for l in ss.so_lines]
             delivery = {"zone_id": zone_id, "payment_type": pay_type}
             ok, res = oc.create_sales_order(uid, pwd, customer_id, lines, delivery)
             if ok:
                 ss.so_lines = []
+                ss.so_selected_cust = None
                 st.success(f"تم إنشاء {res['name']} ✓")
                 ss.so_open = res["id"]; st.rerun()
             else:
