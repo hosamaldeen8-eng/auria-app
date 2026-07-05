@@ -75,15 +75,26 @@ st.markdown("""
   [data-testid="stStatusWidget"] { visibility: hidden; }
   div.st-key-topnav { position: sticky; top: 0; z-index: 999; background: rgba(20,27,20,.96);
     backdrop-filter: blur(8px); padding: 6px 0 4px; border-bottom: 1px solid #2E3D2E; margin-bottom: 10px; }
-  div.st-key-topnav .stButton>button { background: transparent; border: none; color: #9BA58F;
-    font-size: 12px; padding: 7px 2px; border-radius: 9px; box-shadow: none; }
-  div.st-key-topnav .stButton>button:hover { color: #E8E4D6; background: rgba(255,255,255,.05); border: none; }
-  div.st-key-topnav .stButton>button[kind="primary"] { background: rgba(127,176,105,.14);
-    color: #7FB069; font-weight: 700; border: none; }
-  .st-key-topnav .stButton>button{background:transparent;border:1px solid transparent;color:#9BA58F;font-size:11px;padding:7px 2px;border-radius:10px;line-height:1.3;min-height:54px;white-space:pre-line;font-weight:500;transition:all .15s}
-  .st-key-topnav .stButton>button:hover{color:#E8E4D6;background:rgba(255,255,255,.05);border-color:transparent}
-  .st-key-topnav .stButton>button[kind="primary"],
-  .st-key-topnav [data-testid="stBaseButton-primary"]{background:rgba(127,176,105,.14) !important;color:#7FB069 !important;border:1px solid rgba(127,176,105,.35) !important;font-weight:700}
+  /* Force the nav columns to stay in ONE horizontal row (no vertical stacking
+     on narrow phones) — square 1:1 buttons sized to fit side by side. */
+  div.st-key-topnav [data-testid="stHorizontalBlock"] {
+    display: flex !important; flex-wrap: nowrap !important; gap: 5px !important;
+    overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  div.st-key-topnav [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+    flex: 1 1 0 !important; min-width: 0 !important; width: auto !important; }
+  div.st-key-topnav .stButton>button {
+    background:#1A231A; border:1px solid #2A3A2A; color:#9BA58F;
+    aspect-ratio: 1 / 1; width:100%; padding:4px 2px; border-radius:12px;
+    font-size:10px; line-height:1.25; white-space:pre-line; font-weight:500;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    box-shadow:none; transition:all .15s; }
+  div.st-key-topnav .stButton>button:hover { color:#E8E4D6; background:#22301F; border-color:#7FB069; }
+  div.st-key-topnav .stButton>button p { margin:0 !important; font-size:10px; line-height:1.2; }
+  div.st-key-topnav .stButton>button p:first-line { font-size:18px; }
+  div.st-key-topnav .stButton>button[kind="primary"],
+  div.st-key-topnav [data-testid="stBaseButton-primary"] {
+    background:rgba(127,176,105,.16) !important; color:#7FB069 !important;
+    border:1px solid rgba(127,176,105,.5) !important; font-weight:700; }
   .auria-loader{position:fixed;inset:0;background:rgba(20,27,20,.78);display:none;align-items:center;justify-content:center;z-index:99999}
   body:has([data-testid="stStatusWidget"]) .auria-loader{display:flex}
   .auria-loader img{width:70px;height:70px;border-radius:50%;animation:apulse 1.1s ease-in-out infinite;box-shadow:0 0 34px rgba(127,176,105,.35)}
@@ -307,7 +318,9 @@ def nav():
         for i, (key, icon, label) in enumerate(tabs):
             active = ss.screen == key
             with cols[i]:
-                if st.button(f"{icon}\n{label}", key=f"nav_{key}", use_container_width=True,
+                # Larger icon on top, small label under — reads clearly in a square
+                btn_label = f"{icon}\n{label}"
+                if st.button(btn_label, key=f"nav_{key}", use_container_width=True,
                              type="primary" if active else "secondary"):
                     if key == "production":
                         ss.mo_open = None  # tapping the tab returns to the list
