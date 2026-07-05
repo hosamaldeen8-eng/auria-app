@@ -122,6 +122,47 @@ def _flash(ok, msg):
     else:
         st.error(text)
 
+
+def _rear_camera(key, label="📸 صوّر الإيصال"):
+    """Camera capture that defaults to the phone's REAR camera.
+
+    Streamlit's st.camera_input opens the front camera with no toggle. We
+    inject JS that overrides getUserMedia to request facingMode:environment
+    (the rear/back camera — correct for photographing receipts & invoices),
+    then reuse st.camera_input for its reliable capture plumbing.
+    Returns the photo bytes (or None).
+    """
+    st.caption(label)
+    # Force rear camera: patch getUserMedia so Streamlit's widget opens the
+    # environment-facing lens. Runs once per render, before the widget mounts.
+    st.markdown("""
+    <script>
+    (function(){
+      try{
+        var pdoc = window.parent.document;
+        if(pdoc.__auriaRearCam) return;
+        pdoc.__auriaRearCam = true;
+        var md = window.parent.navigator.mediaDevices;
+        if(md && md.getUserMedia){
+          var orig = md.getUserMedia.bind(md);
+          md.getUserMedia = function(constraints){
+            try{
+              constraints = constraints || {};
+              if(constraints.video){
+                if(constraints.video === true){ constraints.video = {}; }
+                constraints.video.facingMode = { ideal: 'environment' };
+              }
+            }catch(e){}
+            return orig(constraints);
+          };
+        }
+      }catch(e){}
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+    photo = st.camera_input(label, key=key, label_visibility="collapsed")
+    return photo.getvalue() if photo else None
+
 # ── PERSISTENT LOGIN (cookies, no external component) ───────
 # Read: st.context.cookies (native Streamlit ≥1.37, reliable)
 # Write/delete: a tiny JS snippet — parent.document.cookie
@@ -808,6 +849,21 @@ def _po_detail(uid, pwd, po_id):
             _flash(ok, msg)
             if ok: st.rerun()
 
+    # ── Document capture (supplier invoice / delivery note) ──
+    with st.expander("📎 إرفاق مستند (فاتورة المورّد / إيصال)"):
+        atts = oc.get_po_attachments(uid, pwd, po_id)
+        if atts:
+            for a in atts:
+                st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:6px 12px'><span>📄 {a['name']}</span><span style='opacity:.5;font-size:11px'>{a['date']}</span></div>", unsafe_allow_html=True)
+        po_photo = _rear_camera("po_cam", "📸 صوّر المستند")
+        if st.button("إرفاق الصورة", key="po_attach", use_container_width=True):
+            if po_photo:
+                ok, msg = oc.attach_po_photo(uid, pwd, po_id, po_photo)
+                _flash(ok, msg)
+                if ok: st.rerun()
+            else:
+                st.error("التقط صورة أولاً")
+
     st.markdown("**المنتجات**")
     for l in d["lines"]:
         if not l["qty"]:
@@ -867,14 +923,12 @@ def _expenses_tab(uid, pwd):
             ci = st.selectbox("الفئة", range(len(cat_names)), format_func=lambda i: cat_names[i], key="exp_cat")
             desc = st.text_input("الوصف", key="exp_desc", placeholder="مثال: فاتورة كهرباء السراج")
             amount = st.number_input("المبلغ (د.ل)", min_value=0.0, step=5.0, key="exp_amount")
-            # Camera capture for the receipt
-            st.caption("📸 صوّر الإيصال (اختياري)")
-            photo = st.camera_input("التقط صورة الإيصال", key="exp_cam", label_visibility="collapsed")
+            # Receipt capture — defaults to the rear camera
+            photo_bytes = _rear_camera("exp_cam", "📸 صوّر الإيصال (اختياري)")
             if st.button("حفظ المصروف", type="primary", use_container_width=True, key="exp_save"):
                 if not desc.strip() or amount <= 0:
                     st.error("أدخل الوصف والمبلغ")
                 else:
-                    photo_bytes = photo.getvalue() if photo else None
                     ok, msg = oc.create_expense(uid, pwd, cats[ci]["id"], desc, amount, photo_bytes)
                     if ok:
                         st.success(msg); st.rerun()

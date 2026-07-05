@@ -909,6 +909,30 @@ def get_purchasable_products(uid, pwd):
              "cost": p.get("standard_price", 0)} for p in prods]
 
 
+def attach_po_photo(uid, pwd, po_id, photo_bytes, photo_name="po_document.jpg"):
+    """Attach a receipt/invoice photo to a purchase order. Returns (ok, msg)."""
+    try:
+        import base64 as _b64
+        odoo(uid, pwd, "ir.attachment", "create", [{
+            "name": photo_name,
+            "res_model": "purchase.order",
+            "res_id": po_id,
+            "datas": _b64.b64encode(photo_bytes).decode(),
+            "mimetype": "image/jpeg",
+        }])
+        return True, "تم إرفاق الصورة ✓"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def get_po_attachments(uid, pwd, po_id):
+    """List document attachments on a PO."""
+    atts = odoo(uid, pwd, "ir.attachment", "search_read",
+        [[["res_model", "=", "purchase.order"], ["res_id", "=", po_id]]],
+        {"fields": ["name", "create_date"], "limit": 20, "order": "id desc"})
+    return [{"name": a["name"], "date": (a.get("create_date") or "")[:10]} for a in atts]
+
+
 def create_rfq(uid, pwd, supplier_id, lines):
     """Create a draft RFQ. lines = [(product_id, qty, price), ...].
     Returns (ok, po_id_or_msg)."""
