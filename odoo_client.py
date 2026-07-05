@@ -1401,14 +1401,16 @@ def get_shipping_services(uid, pwd):
     return out
 
 
-def create_customer(uid, pwd, name, mobile, address=""):
-    """Create a new customer (walk-in / phone order). Returns partner id.
-    This Odoo requires the `phone` field, so we set both phone and mobile
-    to the number provided."""
+def create_customer(uid, pwd, name, phone, address="", mobile=None):
+    """Create a new customer. `phone` is the primary number.
+    `mobile` is optional — if empty, it duplicates `phone` so the Accurate
+    API (which requires both phone and mobile) always has a value.
+    Returns (ok, partner_id_or_msg)."""
     try:
-        number = (mobile or "").strip()
+        phone_v = (phone or "").strip()
+        mobile_v = (mobile or "").strip() or phone_v  # fallback to phone
         pid = odoo(uid, pwd, "res.partner", "create", [{
-            "name": name, "phone": number, "mobile": number,
+            "name": name, "phone": phone_v, "mobile": mobile_v,
             "street": address, "customer_rank": 1,
         }])
         return True, pid

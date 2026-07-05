@@ -1238,11 +1238,13 @@ def _create_so_form(uid, pwd):
             st.info("لا يوجد عميل بهذا الرقم — أنشئ عميلاً جديداً")
             digits = "".join(ch for ch in cust_q if ch.isdigit())
             nc_name = st.text_input("اسم العميل", key="so_nc_name")
-            nc_mobile = st.text_input("الجوال", key="so_nc_mobile",
-                                      value=cust_q if digits else "",
-                                      placeholder="+218 9X XXXXXXX")
+            nc_phone = st.text_input("الهاتف *", key="so_nc_phone",
+                                     value=cust_q if digits else "",
+                                     placeholder="+218 9X XXXXXXX")
+            nc_mobile = st.text_input("الجوال (اختياري)", key="so_nc_mobile",
+                                      placeholder="يُستخدم الهاتف إذا تُرك فارغاً")
             nc_addr = st.text_input("العنوان (اختياري)", key="so_nc_addr")
-            new_cust = (nc_name, nc_mobile, nc_addr)
+            new_cust = (nc_name, nc_phone, nc_addr, nc_mobile)
     else:
         st.caption("ابدأ بكتابة رقم الهاتف أو الاسم للبحث في جهات الاتصال")
 
@@ -1360,8 +1362,10 @@ def _create_so_form(uid, pwd):
             # Resolve customer (selected existing or new)
             if new_cust is not None:
                 if not new_cust[0].strip() or not new_cust[1].strip():
-                    st.error("أدخل اسم العميل والجوال"); return
-                ok, cid = oc.create_customer(uid, pwd, new_cust[0], new_cust[1], new_cust[2])
+                    st.error("أدخل اسم العميل والهاتف"); return
+                # new_cust = (name, phone, address, mobile_optional)
+                ok, cid = oc.create_customer(uid, pwd, new_cust[0], new_cust[1],
+                                             new_cust[2], mobile=new_cust[3])
                 if not ok:
                     st.error(cid); return
                 customer_id = cid
