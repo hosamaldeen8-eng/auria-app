@@ -102,7 +102,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 13
+APP_EXPECTS_CLIENT = 14
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1234,19 +1234,44 @@ def _create_so_form(uid, pwd):
 
     if ss.so_lines:
         total = sum(l["qty"] * l["price"] for l in ss.so_lines)
-        for l in ss.so_lines:
-            st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:6px 12px'><span>{l['name'][:26]} ×{l['qty']:g}</span><span style='color:#D4A853'>{l['qty']*l['price']:,.0f}</span></div>", unsafe_allow_html=True)
+        for li, l in enumerate(ss.so_lines):
+            dcol1, dcol2 = st.columns([5, 1])
+            dcol1.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:6px 12px'><span>{l['name'][:26]} ×{l['qty']:g}</span><span style='color:#D4A853'>{l['qty']*l['price']:,.0f}</span></div>", unsafe_allow_html=True)
+            if dcol2.button("🗑️", key=f"so_delline_{li}", use_container_width=True):
+                ss.so_lines.pop(li); st.rerun()
         st.markdown(f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:6px 0'>الإجمالي: {total:,.0f} د.ل</div>", unsafe_allow_html=True)
 
-    # Delivery (Accurate) fields
-    st.markdown("<div style='font-size:12px;opacity:.7;margin-top:8px'>🚚 بيانات الشحن (يمامة)</div>", unsafe_allow_html=True)
+    # ── Delivery (Accurate/Yamamah) fields ──
+    st.markdown("<hr style='margin:10px 0'>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:12px;opacity:.7'>🚚 بيانات الشحن</div>", unsafe_allow_html=True)
+
+    # Delivery company — default Alyamama
+    companies = oc.get_delivery_companies(uid, pwd)
+    default_dc = next((i for i, c in enumerate(companies) if "yamama" in c["name"].lower() or "لياما" in c["name"]), 0)
+    dci = st.selectbox("شركة التوصيل", range(len(companies)),
+                       format_func=lambda i: companies[i]["name"],
+                       index=default_dc, key="so_dc")
+    delivery_company_id = companies[dci]["id"]
+
+    # Zone (parent)
     zone_q = st.text_input("ابحث عن المنطقة", key="so_zone_q", placeholder="مثال: طرابلس")
     zones = oc.get_accurate_zones(uid, pwd, zone_q) if zone_q else []
     zone_id = None
+    subzone_id = None
     if zones:
         znames = [z["name"] for z in zones]
         zi = st.selectbox("المنطقة", range(len(znames)), format_func=lambda i: znames[i], key="so_zone")
         zone_id = zones[zi]["id"]
+        # Sub-zone (children of chosen zone)
+        subs = oc.get_accurate_subzones(uid, pwd, zone_id)
+        if subs:
+            snames = [s["name"] for s in subs]
+            si_ = st.selectbox("المنطقة الفرعية", range(len(snames)),
+                               format_func=lambda i: snames[i], key="so_subzone")
+            subzone_id = subs[si_]["id"]
+        else:
+            st.caption("لا توجد مناطق فرعية لهذه المنطقة")
+
     pay_type = st.selectbox("نوع الدفع", ["COLC", "CASH", "CRDT"],
         format_func=lambda k: {"COLC": "دفع عند الاستلام (COD)", "CASH": "مدفوع مسبقاً", "CRDT": "آجل"}[k],
         key="so_paytype")
@@ -1269,7 +1294,8 @@ def _create_so_form(uid, pwd):
                     st.error(cid); return
                 customer_id = cid
             lines = [(l["pid"], l["qty"], l["price"]) for l in ss.so_lines]
-            delivery = {"zone_id": zone_id, "payment_type": pay_type}
+            delivery = {"zone_id": zone_id, "subzone_id": subzone_id,
+                        "payment_type": pay_type, "delivery_company_id": delivery_company_id}
             ok, res = oc.create_sales_order(uid, pwd, customer_id, lines, delivery)
             if ok:
                 ss.so_lines = []

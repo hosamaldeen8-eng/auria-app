@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 13
+CLIENT_VERSION = 14
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1363,12 +1363,28 @@ def get_sellable_products(uid, pwd):
 
 
 def get_accurate_zones(uid, pwd, query=""):
-    domain = [["name", "not like", "test"]]
+    """Parent zones only (top-level regions)."""
+    domain = [["is_subzone", "=", False], ["name", "not like", "test"]]
     if query:
         domain.append(["name", "ilike", query])
     zones = odoo(uid, pwd, "accurate.zone", "search_read", [domain],
-        {"fields": ["id", "name"], "limit": 40, "order": "name"})
-    return [{"id": z["id"], "name": z["name"]} for z in zones]
+        {"fields": ["id", "name", "child_count"], "limit": 40, "order": "name"})
+    return [{"id": z["id"], "name": z["name"], "has_subs": z.get("child_count", 0) > 0} for z in zones]
+
+
+def get_accurate_subzones(uid, pwd, zone_id):
+    """Sub-zones under a parent zone."""
+    subs = odoo(uid, pwd, "accurate.zone", "search_read",
+        [[["parent_id", "=", zone_id], ["is_subzone", "=", True]]],
+        {"fields": ["id", "name"], "order": "name"})
+    return [{"id": s["id"], "name": s["name"]} for s in subs]
+
+
+def get_delivery_companies(uid, pwd):
+    """Available delivery carriers; Alyamama is the default."""
+    dcs = odoo(uid, pwd, "accurate.delivery.company", "search_read", [[]],
+        {"fields": ["id", "name"], "order": "id"})
+    return [{"id": d["id"], "name": d["name"]} for d in dcs]
 
 
 def create_customer(uid, pwd, name, mobile, address=""):
@@ -1402,6 +1418,8 @@ def create_sales_order(uid, pwd, customer_id, lines, delivery=None):
                 vals["accurate_recipient_subzone_id"] = delivery["subzone_id"]
             if delivery.get("payment_type"):
                 vals["accurate_payment_type_code"] = delivery["payment_type"]
+            # Default delivery company to Alyamama (id 1) unless specified
+            vals["accurate_delivery_company_id"] = delivery.get("delivery_company_id", 1)
         so_id = odoo(uid, pwd, "sale.order", "create", [vals])
         name = odoo(uid, pwd, "sale.order", "read", [[so_id]], {"fields": ["name"]})
         return True, {"id": so_id, "name": name[0]["name"]}
