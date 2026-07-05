@@ -1649,31 +1649,46 @@ def _cs_inbox(uid, pwd):
         key="cs_status_f")
 
     convs = oc.get_conversations(uid, pwd, channel_f, status_f)
+
+    # One-time CSS: turn each conversation button into a rich, tappable row
+    st.markdown("""<style>
+    .conv-row .stButton>button {
+        background:#1A231A; border:1px solid #2A3A2A; border-radius:12px;
+        padding:11px 14px; width:100%; text-align:right; color:#E8E4D6;
+        white-space:pre-line; line-height:1.5; font-weight:400;
+        min-height:0; transition:all .12s;
+    }
+    .conv-row .stButton>button:hover {
+        background:#22301F; border-color:#7FB069; }
+    .conv-row.unread .stButton>button { border-inline-start:3px solid #E07070; }
+    </style>""", unsafe_allow_html=True)
+
+    if not convs:
+        st.caption("لا توجد محادثات مطابقة")
+
     for c in convs:
         m = oc.CHANNEL_META.get(c["channel"], {"icon": "•", "color": "#888", "ar": ""})
-        unread_badge = f"<span style='background:#E07070;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700'>{c['unread']}</span>" if c["unread"] else ""
         status_dot = {"open": "🟢", "answered": "🔵", "closed": "⚪"}.get(c["status"], "")
         prefix = "↩️ " if c["last_dir"] == "out" else ""
-        # Label chips on the conversation card
+        unread_txt = f"  🔴{c['unread']}" if c["unread"] else ""
+        # Compact preview
+        preview = (c["preview"] or "")[:42]
+        # Whole row is one button — label carries name, time, preview
+        label = (f"{m['icon']} {c['customer']}{unread_txt}   ·   {c['time'][-5:]}\n"
+                 f"{status_dot} {prefix}{preview}")
+        row_cls = "conv-row unread" if c["unread"] else "conv-row"
+        with st.container(key=f"convrow_{c['id']}"):
+            st.markdown(f"<div class='{row_cls}'></div>", unsafe_allow_html=True)
+            if st.button(label, key=f"conv_{c['id']}", use_container_width=True):
+                ss.chat_open = c["id"]; st.rerun()
+        # Label chips (only if present) — compact, below the row
         clabels = oc.get_conversation_labels(uid, pwd, c["id"])
-        chips = "".join(
-            f"<span style='background:{l['color']}22;color:{l['color']};padding:1px 7px;"
-            f"border-radius:10px;font-size:9px;margin-inline-end:3px'>{l['name']}</span>"
-            for l in clabels)
-        card = (
-            "<div class='task-row' style='margin-bottom:4px'>"
-            "<div style='display:flex;justify-content:space-between;align-items:center'>"
-            f"<span style='font-weight:700'>{m['icon']} {c['customer']}</span>"
-            f"<span style='display:flex;gap:6px;align-items:center'>{unread_badge}<span style='font-size:11px;opacity:.5'>{c['time'][-5:]}</span></span>"
-            "</div>"
-            f"<div style='font-size:12px;opacity:.65;margin-top:4px'>{status_dot} {prefix}{c['preview']}</div>"
-            f"{'<div style=\"margin-top:5px\">' + chips + '</div>' if chips else ''}"
-            "</div>"
-        )
-        st.markdown(card, unsafe_allow_html=True)
-        if st.button("فتح المحادثة", key=f"conv_{c['id']}", use_container_width=True):
-            ss.chat_open = c["id"]; st.rerun()
-        st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
+        if clabels:
+            chips = "".join(
+                f"<span style='background:{l['color']}22;color:{l['color']};padding:1px 8px;"
+                f"border-radius:10px;font-size:9px;margin-inline-end:3px'>{l['name']}</span>"
+                for l in clabels)
+            st.markdown(f"<div style='margin:-4px 0 8px 4px'>{chips}</div>", unsafe_allow_html=True)
 
     # Secondary tools — tickets + order lookup, tucked away
     with st.expander("🎫 التذاكر وحالة الطلب"):
