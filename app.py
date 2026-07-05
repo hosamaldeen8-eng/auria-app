@@ -112,6 +112,16 @@ ss.setdefault("chat_open", None)
 def t(key):
     return T[ss.lang].get(key, key)
 
+
+def _flash(ok, msg):
+    """Safely show a success/error toast. Coerces msg to a plain string so
+    Streamlit never tries to introspect a non-string as a variable."""
+    text = str(msg) if msg is not None else ("تم ✓" if ok else "حدث خطأ")
+    if ok:
+        st.success(text)
+    else:
+        st.error(text)
+
 # ── PERSISTENT LOGIN (cookies, no external component) ───────
 # Read: st.context.cookies (native Streamlit ≥1.37, reliable)
 # Write/delete: a tiny JS snippet — parent.document.cookie
@@ -428,17 +438,17 @@ def mo_detail_screen():
     with c0:
         if mo["state"] in ("confirmed", "progress") and not mo["any_running"] and st.button("▶️ بدء العمل", use_container_width=True, type="primary"):
             ok, msg = oc.mo_start_work(uid, pwd, mo_id)
-            st.success(msg) if ok else st.error(msg)
+            _flash(ok, msg)
             if ok: st.rerun()
     with c1:
         if mo["state"] == "draft" and st.button("🟢 تأكيد الأمر", use_container_width=True):
             ok, msg = oc.mo_confirm(uid, pwd, mo_id)
-            st.success(msg) if ok else st.error(msg)
+            _flash(ok, msg)
             if ok: st.rerun()
     with c2:
         if mo["state"] in ("confirmed", "progress", "to_close") and st.button("✅ إنهاء الأمر بالكامل", use_container_width=True):
             ok, msg = oc.mo_validate(uid, pwd, mo_id)
-            st.success(msg) if ok else st.error(msg)
+            _flash(ok, msg)
             if ok: st.rerun()
 
     # ── Work orders with individual timers ──
@@ -647,7 +657,7 @@ def production_screen():
             st.markdown(card, unsafe_allow_html=True)
             if st.button("📥 استلام كامل", key=f"rcv_{r['id']}", use_container_width=True):
                 ok, msg = oc.validate_picking(uid, pwd, r["id"])
-                st.success(msg) if ok else st.error(msg)
+                _flash(ok, msg)
                 if ok: st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
@@ -671,7 +681,7 @@ def production_screen():
                                   value=float(chosen["available"]), key="tr_qty")
             if st.button("🔄 نفّذ التحويل", type="primary", use_container_width=True, key="tr_go"):
                 ok, msg = oc.create_transfer(uid, pwd, route_key, chosen["id"], qty)
-                st.success(msg) if ok else st.error(msg)
+                _flash(ok, msg)
 
 # ── PROCUREMENT ──────────────────────────────────────────────
 def procurement_screen():
@@ -791,11 +801,11 @@ def _po_detail(uid, pwd, po_id):
         c1, c2 = st.columns(2)
         if c1.button("🟢 تأكيد الأمر", use_container_width=True, type="primary"):
             ok, msg = oc.po_confirm(uid, pwd, po_id)
-            st.success(msg) if ok else st.error(msg)
+            _flash(ok, msg)
             if ok: st.rerun()
         if c2.button("✖️ إلغاء", use_container_width=True):
             ok, msg = oc.po_cancel(uid, pwd, po_id)
-            st.success(msg) if ok else st.error(msg)
+            _flash(ok, msg)
             if ok: st.rerun()
 
     st.markdown("**المنتجات**")
@@ -828,7 +838,7 @@ def _po_detail(uid, pwd, po_id):
                 st.info("الطلب مؤكد وجاهز للفوترة")
                 if st.button("🧾 إنشاء الفاتورة", use_container_width=True, type="primary"):
                     ok, msg = oc.create_bill(uid, pwd, po_id)
-                    st.success(msg) if ok else st.error(msg)
+                    _flash(ok, msg)
                     if ok: st.rerun()
             for b in pay["bills"]:
                 pay_col = {"مدفوع": "#7FB069", "مدفوع جزئياً": "#D4A853"}.get(b["payment_ar"], "#E07070")
@@ -843,7 +853,7 @@ def _po_detail(uid, pwd, po_id):
                 if b["payment"] not in ("paid", "in_payment"):
                     if st.button("💵 تأكيد الدفع", key=f"pay_{b['id']}", use_container_width=True, type="primary"):
                         ok, msg = oc.confirm_payment(uid, pwd, b["id"])
-                        st.success(msg) if ok else st.error(msg)
+                        _flash(ok, msg)
                         if ok: st.rerun()
 
 
@@ -909,7 +919,7 @@ def _receiving_tab(uid, pwd):
         st.markdown(card, unsafe_allow_html=True)
         if st.button("📥 استلام كامل", key=f"prcv_{r['id']}", use_container_width=True):
             ok, msg = oc.validate_picking(uid, pwd, r["id"])
-            st.success(msg) if ok else st.error(msg)
+            _flash(ok, msg)
             if ok: st.rerun()
         st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
@@ -929,7 +939,7 @@ def _receiving_tab(uid, pwd):
                               value=float(chosen["available"]), key="prc_qty")
         if st.button("🔄 نفّذ التحويل", type="primary", use_container_width=True, key="prc_go"):
             ok, msg = oc.create_transfer(uid, pwd, route_key, chosen["id"], qty)
-            st.success(msg) if ok else st.error(msg)
+            _flash(ok, msg)
 
 
 def _procurement_screen_old():
@@ -1074,7 +1084,7 @@ def _so_detail(uid, pwd, so_id):
     if d["state"] in ("draft", "sent"):
         if st.button("🟢 تأكيد الطلب", use_container_width=True, type="primary"):
             ok, msg = oc.so_confirm(uid, pwd, so_id)
-            st.success(msg) if ok else st.error(msg)
+            _flash(ok, msg)
             if ok: st.rerun()
 
     # ── Shipment / Accurate API status + guidance ──
@@ -1099,21 +1109,21 @@ def _so_detail(uid, pwd, so_id):
             c1, c2 = st.columns(2)
             if c1.button("💾 حفظ الرقم", key=f"savemob_{sh['id']}", use_container_width=True):
                 ok, msg = oc.fix_shipment_mobile(uid, pwd, sh["id"], new_mob)
-                st.success(msg) if ok else st.error(msg)
+                _flash(ok, msg)
             if c2.button("🔄 أعد الإرسال", key=f"resend_{sh['id']}", use_container_width=True, type="primary"):
                 ok, msg = oc.resend_shipment(uid, pwd, sh["id"])
-                st.success(msg) if ok else st.error(msg)
+                _flash(ok, msg)
                 if ok: st.rerun()
         elif g["fix_type"] == "retry":
             if st.button("🔄 أعد المحاولة", key=f"retry_{sh['id']}", use_container_width=True, type="primary"):
                 ok, msg = oc.resend_shipment(uid, pwd, sh["id"])
-                st.success(msg) if ok else st.error(msg)
+                _flash(ok, msg)
                 if ok: st.rerun()
         elif g["fix_type"] == "subzone":
             st.caption("عدّل المنطقة الفرعية في أودو ثم أعد الإرسال")
             if st.button("🔄 أعد الإرسال", key=f"resendsz_{sh['id']}", use_container_width=True, type="primary"):
                 ok, msg = oc.resend_shipment(uid, pwd, sh["id"])
-                st.success(msg) if ok else st.error(msg)
+                _flash(ok, msg)
                 if ok: st.rerun()
     else:
         st.markdown(f"<div class='task-row'><span style='color:{sh['color']}'>{sh['label']}</span></div>", unsafe_allow_html=True)
