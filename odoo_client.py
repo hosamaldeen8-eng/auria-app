@@ -943,7 +943,8 @@ def get_po_payment(uid, pwd, po_id):
             {"fields": ["name", "state", "payment_state", "amount_total", "amount_residual"]})
         for b in recs:
             bills.append({
-                "id": b["id"], "name": b["name"], "state": b["state"],
+                "id": b["id"], "name": b["name"] if b.get("name") else "فاتورة مسودة",
+                "state": b["state"],
                 "payment": b.get("payment_state") or "not_paid",
                 "payment_ar": PAY.get(b.get("payment_state"), b.get("payment_state") or "—"),
                 "total": b["amount_total"], "residual": b.get("amount_residual", 0),
@@ -969,24 +970,30 @@ def create_bill(uid, pwd, po_id):
 
 def confirm_payment(uid, pwd, bill_id):
     """Post the bill then mark as paid (register full payment). Returns (ok, msg)."""
+    from datetime import date
     try:
-        # Post if still draft
-        bill = odoo(uid, pwd, "account.move", "read", [[bill_id]], {"fields": ["state", "payment_state"]})
+        # Ensure the required Bill Date is set before posting
+        bill = odoo(uid, pwd, "account.move", "read", [[bill_id]],
+                    {"fields": ["state", "payment_state", "invoice_date"]})
         if bill and bill[0]["state"] == "draft":
+            if not bill[0].get("invoice_date"):
+                odoo(uid, pwd, "account.move", "write",
+                     [[bill_id], {"invoice_date": str(date.today())}])
             try:
                 odoo(uid, pwd, "account.move", "action_post", [[bill_id]])
             except Exception as e:
                 if "cannot marshal None" not in str(e):
                     raise
-        # Register payment via the payment register wizard
+        # Register payment via the payment register wizard (needs active_ids
+        # context on BOTH create and action, plus a payment_date)
+        ctx = {"active_model": "account.move", "active_ids": [bill_id], "active_id": bill_id}
         try:
-            wiz = odoo(uid, pwd, "account.payment.register", "create", [{
-                "line_ids": False,
-            }], {"context": {"active_model": "account.move", "active_ids": [bill_id]}})
-            odoo(uid, pwd, "account.payment.register", "action_create_payments", [[wiz]])
+            wiz = odoo(uid, pwd, "account.payment.register", "create",
+                       [{"payment_date": str(date.today())}], {"context": ctx})
+            odoo(uid, pwd, "account.payment.register", "action_create_payments",
+                 [[wiz]], {"context": ctx})
         except Exception as e:
             if "cannot marshal None" not in str(e):
-                # Fallback: some configs use a simpler flow
                 return False, _clean_odoo_error(e)
         b2 = odoo(uid, pwd, "account.move", "read", [[bill_id]], {"fields": ["payment_state"]})
         if b2 and b2[0]["payment_state"] in ("paid", "in_payment"):
