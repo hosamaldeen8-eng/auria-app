@@ -102,7 +102,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 14
+APP_EXPECTS_CLIENT = 15
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -140,6 +140,10 @@ def _cached_sellable_products(uid, pwd):
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_delivery_companies(uid, pwd):
     return oc.get_delivery_companies(uid, pwd)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_services(uid, pwd):
+    return oc.get_shipping_services(uid, pwd)
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_zones(uid, pwd, query):
@@ -1313,6 +1317,14 @@ def _create_so_form(uid, pwd):
                        index=default_dc, key="so_dc")
     delivery_company_id = companies[dci]["id"]
 
+    # Shipping service — required at confirmation; default شحن عادى
+    services = _cached_services(uid, pwd)
+    default_svc = next((i for i, s in enumerate(services) if "عاد" in s["name"]), 0)
+    svci = st.selectbox("خدمة الشحن", range(len(services)),
+                        format_func=lambda i: services[i]["name"],
+                        index=default_svc, key="so_svc")
+    service_id = services[svci]["id"]
+
     # Zone (parent)
     zone_q = st.text_input("ابحث عن المنطقة", key="so_zone_q", placeholder="مثال: طرابلس")
     zones = _cached_zones(uid, pwd, zone_q) if zone_q else []
@@ -1355,7 +1367,8 @@ def _create_so_form(uid, pwd):
                 customer_id = cid
             lines = [(l["pid"], l["qty"], l["price"]) for l in ss.so_lines]
             delivery = {"zone_id": zone_id, "subzone_id": subzone_id,
-                        "payment_type": pay_type, "delivery_company_id": delivery_company_id}
+                        "payment_type": pay_type, "delivery_company_id": delivery_company_id,
+                        "service_id": service_id}
             ok, res = oc.create_sales_order(uid, pwd, customer_id, lines, delivery)
             if ok:
                 ss.so_lines = []
