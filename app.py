@@ -127,6 +127,29 @@ def t(key):
     return T[ss.lang].get(key, key)
 
 
+# ── Cached reference data ────────────────────────────────────
+# Product lists, delivery companies, and zones change rarely. Without
+# caching, every product selection or "add row" click re-fetched them from
+# Odoo over XML-RPC — that network round-trip was the lag. Cache them so the
+# first load hits Odoo once, then every interaction is instant. TTL keeps
+# them fresh enough (5 min) that new products/prices still appear.
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_sellable_products(uid, pwd):
+    return oc.get_sellable_products(uid, pwd)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_delivery_companies(uid, pwd):
+    return oc.get_delivery_companies(uid, pwd)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_zones(uid, pwd, query):
+    return oc.get_accurate_zones(uid, pwd, query)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_subzones(uid, pwd, zone_id):
+    return oc.get_accurate_subzones(uid, pwd, zone_id)
+
+
 def _flash(ok, msg):
     """Safely show a success/error toast. Coerces msg to a plain string so
     Streamlit never tries to introspect a non-string as a variable."""
@@ -1223,7 +1246,7 @@ def _create_so_form(uid, pwd):
 
     # ── Products: inline rows (product + qty + live price display) ──
     st.markdown("<div style='font-size:12px;opacity:.7'>🛍️ المنتجات</div>", unsafe_allow_html=True)
-    prods = oc.get_sellable_products(uid, pwd)
+    prods = _cached_sellable_products(uid, pwd)
     pnames = ["— اختر —"] + [f"{p['code']+' ' if p['code'] else ''}{p['name']}" for p in prods]
 
     # Start with 3 rows; "add another" grows the count
@@ -1283,7 +1306,7 @@ def _create_so_form(uid, pwd):
     st.markdown("<div style='font-size:12px;opacity:.7'>🚚 بيانات الشحن</div>", unsafe_allow_html=True)
 
     # Delivery company — default Alyamama
-    companies = oc.get_delivery_companies(uid, pwd)
+    companies = _cached_delivery_companies(uid, pwd)
     default_dc = next((i for i, c in enumerate(companies) if "yamama" in c["name"].lower() or "لياما" in c["name"]), 0)
     dci = st.selectbox("شركة التوصيل", range(len(companies)),
                        format_func=lambda i: companies[i]["name"],
@@ -1292,7 +1315,7 @@ def _create_so_form(uid, pwd):
 
     # Zone (parent)
     zone_q = st.text_input("ابحث عن المنطقة", key="so_zone_q", placeholder="مثال: طرابلس")
-    zones = oc.get_accurate_zones(uid, pwd, zone_q) if zone_q else []
+    zones = _cached_zones(uid, pwd, zone_q) if zone_q else []
     zone_id = None
     subzone_id = None
     if zones:
@@ -1300,7 +1323,7 @@ def _create_so_form(uid, pwd):
         zi = st.selectbox("المنطقة", range(len(znames)), format_func=lambda i: znames[i], key="so_zone")
         zone_id = zones[zi]["id"]
         # Sub-zone (children of chosen zone)
-        subs = oc.get_accurate_subzones(uid, pwd, zone_id)
+        subs = _cached_subzones(uid, pwd, zone_id)
         if subs:
             snames = [s["name"] for s in subs]
             si_ = st.selectbox("المنطقة الفرعية", range(len(snames)),
