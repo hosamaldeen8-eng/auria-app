@@ -3,6 +3,9 @@ Auria — Odoo connection layer
 Wraps XML-RPC calls. Each user authenticates with their own Odoo account,
 so every action respects Odoo's permissions and audit log.
 """
+
+# Bump this whenever app.py depends on a new function here.
+CLIENT_VERSION = 12
 import xmlrpc.client
 import threading
 from datetime import date
