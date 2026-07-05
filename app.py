@@ -1834,40 +1834,11 @@ def _chat_view(uid, pwd, conv_id):
                 st.success("تم ضبط التذكير ⏰"); ss[f"show_remind_{conv_id}"] = False; st.rerun()
         st.markdown("<hr style='margin:8px 0;border-color:#2A3A2A'>", unsafe_allow_html=True)
 
-    # ── Message stream (ManyChat img 2: clean bubbles) ──
-    st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
+    # ── Message stream rendered as ONE custom HTML block ──
+    # Streamlit fights per-widget CSS; rendering the whole thread in an
+    # isolated iframe gives full control to match the ManyChat look.
     msgs = oc.get_messages(uid, pwd, conv_id)
-    last_day = None
-    for msg in msgs:
-        # Day separator
-        day = msg["time"][:10] if msg.get("time") else ""
-        if day and day != last_day:
-            st.markdown(f"<div style='text-align:center;color:#6A7A6A;font-size:11px;margin:10px 0'>{day}</div>", unsafe_allow_html=True)
-            last_day = day
-        if msg.get("is_note"):
-            st.markdown(
-                f"<div style='display:flex;justify-content:center;margin:6px 0'>"
-                f"<div style='background:rgba(212,168,83,.12);border:1px dashed rgba(212,168,83,.4);"
-                f"border-radius:12px;padding:6px 12px;max-width:85%;font-size:12px;color:#D4A853'>"
-                f"📝 <b>ملاحظة داخلية</b> · {msg['agent'] or ''}<br>{msg['body']}</div></div>",
-                unsafe_allow_html=True)
-        elif msg["direction"] == "in":
-            img = f"<img src='data:image/jpeg;base64,{msg['image']}' style='max-width:180px;border-radius:10px;margin-top:4px'/>" if msg.get("image") else ""
-            st.markdown(
-                f"<div style='display:flex;justify-content:flex-start;margin:5px 0'>"
-                f"<div style='background:#232D23;border-radius:16px 16px 16px 5px;padding:9px 13px;max-width:80%'>"
-                f"<div style='font-size:13px;color:#E8E4D6'>{msg['body']}</div>{img}"
-                f"<div style='font-size:9px;color:#6A7A6A;margin-top:3px'>{msg['time'][-5:]}</div></div></div>",
-                unsafe_allow_html=True)
-        else:
-            agent = f" · {msg['agent']}" if msg["agent"] else ""
-            img = f"<img src='data:image/jpeg;base64,{msg['image']}' style='max-width:180px;border-radius:10px;margin-top:4px'/>" if msg.get("image") else ""
-            st.markdown(
-                f"<div style='display:flex;justify-content:flex-end;margin:5px 0'>"
-                f"<div style='background:rgba(127,176,105,.18);border-radius:16px 16px 5px 16px;padding:9px 13px;max-width:80%'>"
-                f"<div style='font-size:13px;color:#F5F1E6'>{msg['body']}</div>{img}"
-                f"<div style='font-size:9px;color:#7A8A6A;margin-top:3px;text-align:left'>{msg['time'][-5:]}{agent}</div></div></div>",
-                unsafe_allow_html=True)
+    _render_message_stream(msgs, m)
 
     # ── Composer (ManyChat img 2 + 4): floating emoji, + for send options ──
     st.markdown("<hr style='margin:10px 0;border-color:#2A3A2A'>", unsafe_allow_html=True)
@@ -1925,6 +1896,79 @@ def _chat_view(uid, pwd, conv_id):
             if note.strip():
                 oc.send_reply_full(uid, pwd, conv_id, note, is_note=True)
                 st.rerun()
+
+
+def _render_message_stream(msgs, channel_meta):
+    """Render the whole conversation as one isolated HTML block so the
+    bubbles match the ManyChat design precisely (Auria palette)."""
+    import html as _html
+    rows = []
+    last_day = None
+    for msg in msgs:
+        day = (msg.get("time") or "")[:10]
+        if day and day != last_day:
+            rows.append(f"<div class='daysep'><span>{day}</span></div>")
+            last_day = day
+        body = _html.escape(msg.get("body") or "").replace("\n", "<br>")
+        t = (msg.get("time") or "")[-5:]
+        img = (f"<img class='msgimg' src='data:image/jpeg;base64,{msg['image']}'/>"
+               if msg.get("image") else "")
+        if msg.get("is_note"):
+            agent = _html.escape(msg.get("agent") or "")
+            rows.append(
+                f"<div class='row center'><div class='note'>"
+                f"<div class='notehd'>📝 ملاحظة داخلية · {agent}</div>{body}</div></div>")
+        elif msg["direction"] == "in":
+            rows.append(
+                f"<div class='row start'>"
+                f"<div class='av'>{channel_meta['icon']}</div>"
+                f"<div class='bub in'>{body}{img}<span class='t'>{t}</span></div></div>")
+        else:
+            agent = f" · {_html.escape(msg['agent'])}" if msg.get("agent") else ""
+            rows.append(
+                f"<div class='row end'>"
+                f"<div class='bub out'>{body}{img}<span class='t'>{t}{agent}</span></div></div>")
+
+    stream = "\n".join(rows) or "<div class='empty'>لا رسائل بعد</div>"
+    # Height: roughly scale with message count, capped
+    height = min(560, max(220, len(msgs) * 62 + 40))
+    doc = f"""
+    <!DOCTYPE html><html dir='rtl'><head><meta charset='utf-8'>
+    <style>
+      * {{ margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,'Segoe UI',Tahoma,sans-serif; }}
+      body {{ background:#141B14; padding:8px 4px; }}
+      .stream {{ display:flex; flex-direction:column; gap:2px; }}
+      .row {{ display:flex; align-items:flex-end; gap:7px; margin:4px 0; }}
+      .row.start {{ justify-content:flex-start; }}
+      .row.end {{ justify-content:flex-end; }}
+      .row.center {{ justify-content:center; }}
+      .av {{ width:30px; height:30px; border-radius:50%; background:#2A3A2A;
+             display:flex; align-items:center; justify-content:center; font-size:14px;
+             flex-shrink:0; }}
+      .bub {{ max-width:74%; padding:9px 13px; font-size:13.5px; line-height:1.5;
+              word-wrap:break-word; position:relative; }}
+      .bub.in {{ background:#232D23; color:#E8E4D6; border-radius:16px 16px 16px 4px; }}
+      .bub.out {{ background:linear-gradient(135deg,rgba(127,176,105,.22),rgba(127,176,105,.14));
+                  color:#F5F1E6; border-radius:16px 16px 4px 16px; }}
+      .t {{ display:block; font-size:9.5px; color:#7A8A6A; margin-top:4px; opacity:.75; }}
+      .bub.out .t {{ text-align:left; }}
+      .msgimg {{ display:block; max-width:170px; border-radius:10px; margin-top:5px; }}
+      .note {{ background:rgba(212,168,83,.12); border:1px dashed rgba(212,168,83,.45);
+               border-radius:12px; padding:7px 13px; max-width:82%; font-size:12px;
+               color:#D4A853; text-align:center; }}
+      .notehd {{ font-weight:700; margin-bottom:2px; font-size:11px; }}
+      .daysep {{ text-align:center; margin:12px 0 6px; }}
+      .daysep span {{ background:#1E281E; color:#8A9A7A; font-size:10.5px;
+                      padding:3px 12px; border-radius:12px; }}
+      .empty {{ text-align:center; color:#6A7A6A; font-size:12px; padding:40px 0; }}
+    </style></head>
+    <body><div class='stream'>{stream}</div>
+    <script>
+      // keep view scrolled to the newest message
+      window.scrollTo(0, document.body.scrollHeight);
+    </script>
+    </body></html>"""
+    components.html(doc, height=height, scrolling=True)
 
 
 def _cs_screen_old():
