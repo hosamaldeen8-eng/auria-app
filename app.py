@@ -122,6 +122,8 @@ ss.setdefault("chat_open", None)
 ss.setdefault("so_lines", [])
 ss.setdefault("so_selected_cust", None)
 ss.setdefault("so_rowcount", 3)
+ss.setdefault("so_just_created", None)
+ss.setdefault("so_draft_snapshot", None)
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -1352,7 +1354,11 @@ def _create_so_form(uid, pwd):
 
     cc1, cc2 = st.columns(2)
     if cc1.button("🗑️ مسح", key="so_clear", use_container_width=True):
-        ss.so_lines = []; st.rerun()
+        ss.so_lines = []
+        ss.so_rowcount = 3
+        ss.so_selected_cust = None
+        ss.so_draft_snapshot = None
+        st.rerun()
     if cc2.button("✅ إنشاء الطلب", key="so_create", type="primary", use_container_width=True):
         if not ss.so_lines:
             st.error("أضف منتجاً واحداً على الأقل")
@@ -1375,12 +1381,15 @@ def _create_so_form(uid, pwd):
                         "service_id": service_id}
             ok, res = oc.create_sales_order(uid, pwd, customer_id, lines, delivery)
             if ok:
-                ss.so_lines = []
-                ss.so_selected_cust = None
-                ss.so_rowcount = 3
+                # Order created in Odoo. Do NOT wipe the form yet — only clear
+                # after the order is safely confirmed, so a failed confirm +
+                # going back never strands the user with an empty form.
+                ss.so_open = res["id"]
+                ss.so_just_created = res["id"]  # detail page will try to confirm
                 st.success(f"تم إنشاء {res['name']} ✓")
-                ss.so_open = res["id"]; st.rerun()
+                st.rerun()
             else:
+                # Creation failed — form data is untouched, user can retry
                 st.error(res)
 
 
@@ -1391,6 +1400,25 @@ def _so_detail(uid, pwd, so_id):
     if not d:
         st.error("غير موجود"); return
     meta = oc.SO_STATE.get(d["state"], {"ar": d["state"]})
+
+    # If this order was just created, try to confirm it once, automatically.
+    # On success → the form draft is safe to clear. On failure → keep the
+    # form intact so going back never loses the user's work.
+    if ss.get("so_just_created") == so_id and d["state"] in ("draft", "sent"):
+        ss.so_just_created = None
+        with st.spinner("جارٍ تأكيد الطلب..."):
+            ok, msg = oc.so_confirm(uid, pwd, so_id)
+        if ok:
+            ss.so_lines = []
+            ss.so_selected_cust = None
+            ss.so_rowcount = 3
+            st.success(msg)
+            st.rerun()
+        else:
+            # Confirmation failed — form data preserved. Tell the user clearly.
+            st.warning("تم إنشاء الطلب لكن التأكيد لم يكتمل. بياناتك محفوظة — "
+                       "أصلح الحقول الناقصة أدناه ثم أكّد، أو ارجع لتعديل الطلب.")
+            st.error(msg)
     st.markdown(f"""<div class='greeting'>
         <div style='display:flex;justify-content:space-between;align-items:start'>
           <div>
