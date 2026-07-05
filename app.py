@@ -95,6 +95,22 @@ st.markdown("""
   div.st-key-topnav [data-testid="stBaseButton-primary"] {
     background:rgba(127,176,105,.16) !important; color:#7FB069 !important;
     border:1px solid rgba(127,176,105,.5) !important; font-weight:700; }
+  /* Reusable: any container keyed 'btnrow*' keeps its columns in one
+     horizontal row on phones (no vertical stacking) with compact buttons. */
+  div[class*="st-key-btnrow"] [data-testid="stHorizontalBlock"] {
+    display:flex !important; flex-wrap:nowrap !important; gap:5px !important; }
+  div[class*="st-key-btnrow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+    flex:1 1 0 !important; min-width:0 !important; width:auto !important; }
+  div[class*="st-key-btnrow"] .stButton>button {
+    background:#1A231A; border:1px solid #2A3A2A; color:#C9D3BF;
+    padding:8px 4px; border-radius:10px; font-size:11px; line-height:1.2;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    min-height:0; box-shadow:none; transition:all .12s; }
+  div[class*="st-key-btnrow"] .stButton>button:hover {
+    background:#22301F; border-color:#7FB069; color:#E8E4D6; }
+  /* Label picker: allow wrapping into multiple rows of compact chips. */
+  div[class*="st-key-labelpick"] [data-testid="stHorizontalBlock"] {
+    flex-wrap:wrap !important; }
   .auria-loader{position:fixed;inset:0;background:rgba(20,27,20,.78);display:none;align-items:center;justify-content:center;z-index:99999}
   body:has([data-testid="stStatusWidget"]) .auria-loader{display:flex}
   .auria-loader img{width:70px;height:70px;border-radius:50%;animation:apulse 1.1s ease-in-out infinite;box-shadow:0 0 34px rgba(127,176,105,.35)}
@@ -1750,28 +1766,30 @@ def _chat_view(uid, pwd, conv_id):
     </div>""", unsafe_allow_html=True)
 
     # ── Action toolbar: labels · remind · done · unread ──
-    ac1, ac2, ac3, ac4 = st.columns(4)
-    if ac1.button("🏷️ تصنيف", key=f"lbl_{conv_id}", use_container_width=True):
-        ss[f"show_labels_{conv_id}"] = not ss.get(f"show_labels_{conv_id}", False)
-    if ac2.button("⏰ ذكّرني", key=f"rem_{conv_id}", use_container_width=True):
-        ss[f"show_remind_{conv_id}"] = not ss.get(f"show_remind_{conv_id}", False)
-    if ac3.button("✅ إنهاء", key=f"done_{conv_id}", use_container_width=True):
-        oc.mark_conversation_status(uid, pwd, conv_id, "closed")
-        st.success("تم وضع علامة منجز"); ss.chat_open = None; st.rerun()
-    if ac4.button("📩 غير مقروء", key=f"unr_{conv_id}", use_container_width=True):
-        oc.mark_unread(uid, pwd, conv_id, True)
-        st.success("وُضع كغير مقروء"); ss.chat_open = None; st.rerun()
+    with st.container(key=f"btnrow_chattools_{conv_id}"):
+        ac1, ac2, ac3, ac4 = st.columns(4)
+        if ac1.button("🏷️ تصنيف", key=f"lbl_{conv_id}", use_container_width=True):
+            ss[f"show_labels_{conv_id}"] = not ss.get(f"show_labels_{conv_id}", False)
+        if ac2.button("⏰ ذكّرني", key=f"rem_{conv_id}", use_container_width=True):
+            ss[f"show_remind_{conv_id}"] = not ss.get(f"show_remind_{conv_id}", False)
+        if ac3.button("✅ إنهاء", key=f"done_{conv_id}", use_container_width=True):
+            oc.mark_conversation_status(uid, pwd, conv_id, "closed")
+            st.success("تم وضع علامة منجز"); ss.chat_open = None; st.rerun()
+        if ac4.button("📩 غير مقروء", key=f"unr_{conv_id}", use_container_width=True):
+            oc.mark_unread(uid, pwd, conv_id, True)
+            st.success("وُضع كغير مقروء"); ss.chat_open = None; st.rerun()
 
     # Label picker (toggle panel)
     if ss.get(f"show_labels_{conv_id}"):
         labs = oc.get_labels(uid, pwd)
         applied = {l["id"] for l in conv_labels}
         st.caption("اختر التصنيفات:")
-        lcols = st.columns(3)
-        for i, l in enumerate(labs):
-            mark = "✓ " if l["id"] in applied else ""
-            if lcols[i % 3].button(f"{mark}{l['name']}", key=f"togglbl_{conv_id}_{l['id']}", use_container_width=True):
-                oc.toggle_conversation_label(uid, pwd, conv_id, l["id"]); st.rerun()
+        with st.container(key=f"btnrow_labelpick_{conv_id}"):
+            lcols = st.columns(3)
+            for i, l in enumerate(labs):
+                mark = "✓ " if l["id"] in applied else ""
+                if lcols[i % 3].button(f"{mark}{l['name']}", key=f"togglbl_{conv_id}_{l['id']}", use_container_width=True):
+                    oc.toggle_conversation_label(uid, pwd, conv_id, l["id"]); st.rerun()
 
     # Reminder panel
     if ss.get(f"show_remind_{conv_id}"):
@@ -1831,10 +1849,11 @@ def _chat_view(uid, pwd, conv_id):
                     ss[f"chat_draft_{conv_id}"] = c["body"]; st.rerun()
         # Emoji quick-insert
         emojis = ["🌿", "💚", "✨", "🙏", "😊", "🚚", "❤️", "🌸"]
-        ecols = st.columns(len(emojis))
-        for i, e in enumerate(emojis):
-            if ecols[i].button(e, key=f"emo_{conv_id}_{i}"):
-                ss[f"chat_draft_{conv_id}"] = ss.get(f"chat_draft_{conv_id}", "") + e; st.rerun()
+        with st.container(key=f"btnrow_emoji_{conv_id}"):
+            ecols = st.columns(len(emojis))
+            for i, e in enumerate(emojis):
+                if ecols[i].button(e, key=f"emo_{conv_id}_{i}"):
+                    ss[f"chat_draft_{conv_id}"] = ss.get(f"chat_draft_{conv_id}", "") + e; st.rerun()
         reply = st.text_area("اكتب رداً...", value=ss.get(f"chat_draft_{conv_id}", ""),
                              key=f"chat_reply_{conv_id}", label_visibility="collapsed",
                              placeholder="اكتب رداً...", height=80)
