@@ -1418,14 +1418,16 @@ def create_customer(uid, pwd, name, phone, address="", mobile=None):
         return False, _clean_odoo_error(e)
 
 
-def create_sales_order(uid, pwd, customer_id, lines, delivery=None):
-    """Create a draft SO with optional Accurate delivery fields.
+def create_sales_order(uid, pwd, customer_id, lines, delivery=None, discount=0.0):
+    """Create a draft SO with optional Accurate delivery fields and an
+    optional order-wide discount percentage applied to every line.
     lines = [(product_id, qty, price), ...]
-    delivery = {zone_id, subzone_id, mobile, payment_type} (optional)
     Returns (ok, {id, name} or msg)."""
     try:
+        disc = max(0.0, min(100.0, float(discount or 0)))
         order_lines = [(0, 0, {
             "product_id": pid, "product_uom_qty": qty, "price_unit": price,
+            "discount": disc,
         }) for pid, qty, price in lines if qty > 0]
         if not order_lines:
             return False, "أضف منتجاً واحداً على الأقل"

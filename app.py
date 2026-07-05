@@ -1305,9 +1305,26 @@ def _create_so_form(uid, pwd):
     # Store the built lines for the create action
     ss.so_lines = built_lines
     if built_lines:
-        st.markdown(
-            f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:8px 0'>"
-            f"الإجمالي: {running_total:,.0f} د.ل</div>", unsafe_allow_html=True)
+        # Optional order-wide discount (percentage)
+        discount_pct = st.number_input("خصم (%)", min_value=0.0, max_value=100.0,
+                                       value=0.0, step=5.0, key="so_discount",
+                                       help="خصم يُطبّق على كامل الطلب")
+        disc_amount = running_total * discount_pct / 100.0
+        net_total = running_total - disc_amount
+        if discount_pct > 0:
+            st.markdown(
+                f"<div style='text-align:left;margin:6px 0'>"
+                f"<div style='font-size:12px;opacity:.6'>المجموع الفرعي: {running_total:,.0f} د.ل</div>"
+                f"<div style='font-size:12px;color:#E07070'>الخصم ({discount_pct:g}%): −{disc_amount:,.0f} د.ل</div>"
+                f"<div style='font-weight:700;color:#D4A853;font-size:15px;margin-top:2px'>"
+                f"الإجمالي بعد الخصم: {net_total:,.0f} د.ل</div></div>",
+                unsafe_allow_html=True)
+        else:
+            st.markdown(
+                f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:8px 0'>"
+                f"الإجمالي: {running_total:,.0f} د.ل</div>", unsafe_allow_html=True)
+    else:
+        discount_pct = 0.0
 
     # ── Delivery (Accurate/Yamamah) fields ──
     st.markdown("<hr style='margin:10px 0'>", unsafe_allow_html=True)
@@ -1379,7 +1396,8 @@ def _create_so_form(uid, pwd):
             delivery = {"zone_id": zone_id, "subzone_id": subzone_id,
                         "payment_type": pay_type, "delivery_company_id": delivery_company_id,
                         "service_id": service_id}
-            ok, res = oc.create_sales_order(uid, pwd, customer_id, lines, delivery)
+            ok, res = oc.create_sales_order(uid, pwd, customer_id, lines, delivery,
+                                            discount=discount_pct)
             if ok:
                 # Order created in Odoo. Do NOT wipe the form yet — only clear
                 # after the order is safely confirmed, so a failed confirm +
