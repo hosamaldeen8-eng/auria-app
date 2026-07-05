@@ -108,10 +108,9 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
-  /* Chat header: reverse column order for RTL so ⋮ menu is on the right
-     and ← back is on the left. */
+  /* Chat header: keep in one row, vertically centered. */
   div[class*="st-key-btnrow_chathdr"] [data-testid="stHorizontalBlock"] {
-    flex-direction: row-reverse !important; }
+    align-items:center !important; }
   /* Label picker: allow wrapping into multiple rows of compact chips. */
   div[class*="st-key-labelpick"] [data-testid="stHorizontalBlock"] {
     flex-wrap:wrap !important; }
@@ -1759,23 +1758,22 @@ def _chat_view(uid, pwd, conv_id):
     m = oc.CHANNEL_META.get(head["channel"], {"icon": "•", "ar": "", "color": "#888"})
     conv_labels = oc.get_conversation_labels(uid, pwd, conv_id)
 
-    # ── Minimal header (ManyChat img 2): menu · name/handle · back ──
-    # RTL: menu (⋮) sits on the right, back (←) on the left. Wrapped so the
-    # row stays horizontal on phones instead of stacking.
+    # ── Header: ← back (left) · name (center) · ⋮ menu (right) ──
+    # Streamlit renders columns left→right, so hc1 is leftmost, hc3 rightmost.
     with st.container(key=f"btnrow_chathdr_{conv_id}"):
         hc1, hc2, hc3 = st.columns([1, 5, 1])
         with hc1:
-            if st.button("⋮", key=f"chatmenu_{conv_id}"):
-                ss[f"show_menu_{conv_id}"] = not ss.get(f"show_menu_{conv_id}", False)
+            if st.button("←", key=f"chatback_{conv_id}"):
+                ss.chat_open = None; st.rerun()
         with hc2:
             st.markdown(
-                f"<div style='padding-top:4px;text-align:center'>"
+                f"<div style='text-align:center;line-height:1.25'>"
                 f"<div style='font-size:16px;font-weight:700;color:#F5F1E6'>{head['customer']}</div>"
                 f"<div style='font-size:11px;color:#9BA58F'>{head['handle'] or 'غير مُعيّن'}</div></div>",
                 unsafe_allow_html=True)
         with hc3:
-            if st.button("←", key=f"chatback_{conv_id}"):
-                ss.chat_open = None; st.rerun()
+            if st.button("⋮", key=f"chatmenu_{conv_id}"):
+                ss[f"show_menu_{conv_id}"] = not ss.get(f"show_menu_{conv_id}", False)
     # Channel pill (like the TIKTOK pill)
     label_chips = "".join(
         f"<span style='background:{l['color']}22;color:{l['color']};padding:2px 9px;"
