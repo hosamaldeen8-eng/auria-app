@@ -1607,69 +1607,76 @@ def cs_screen():
     if "chat_open" not in ss:
         ss.chat_open = None
 
-    # Chat view takes over the screen
+    # Chat view takes over the screen when a conversation is open
     if ss.chat_open:
         _chat_view(uid, pwd, ss.chat_open)
         return
 
-    tab1, tab2, tab3 = st.tabs(["💬 المحادثات", "🎫 التذاكر", "📦 حالة الطلب"])
+    # The conversations inbox IS the CS module — it opens immediately.
+    # Tickets and order-status are secondary tools tucked behind a toggle.
+    _cs_inbox(uid, pwd)
 
-    # ── Tab 1: Unified inbox ──
-    with tab1:
-        counts = oc.get_inbox_counts(uid, pwd)
-        # Channel filter chips
-        st.markdown(f"<div style='font-size:12px;opacity:.7;margin-bottom:6px'>"
-                    f"📥 {counts['open']} مفتوحة · {counts['unread']} غير مقروءة</div>",
-                    unsafe_allow_html=True)
-        fc1, fc2 = st.columns(2)
-        ch_opts = ["all"] + list(oc.CHANNEL_META.keys())
-        channel_f = fc1.selectbox("القناة", ch_opts,
-            format_func=lambda k: "كل القنوات" if k == "all" else f"{oc.CHANNEL_META[k]['icon']} {oc.CHANNEL_META[k]['ar']}",
-            key="cs_channel_f")
-        status_f = fc2.selectbox("الحالة", ["all", "open", "answered", "closed"],
-            format_func=lambda k: {"all": "الكل", "open": "مفتوحة", "answered": "تم الرد", "closed": "مغلقة"}[k],
-            key="cs_status_f")
 
-        convs = oc.get_conversations(uid, pwd, channel_f, status_f)
-        for c in convs:
-            m = oc.CHANNEL_META.get(c["channel"], {"icon": "•", "color": "#888", "ar": ""})
-            unread_badge = f"<span style='background:#E07070;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700'>{c['unread']}</span>" if c["unread"] else ""
-            status_dot = {"open": "🟢", "answered": "🔵", "closed": "⚪"}.get(c["status"], "")
-            prefix = "↩️ " if c["last_dir"] == "out" else ""
-            card = (
-                "<div class='task-row' style='margin-bottom:4px'>"
-                "<div style='display:flex;justify-content:space-between;align-items:center'>"
-                f"<span style='font-weight:700'>{m['icon']} {c['customer']}</span>"
-                f"<span style='display:flex;gap:6px;align-items:center'>{unread_badge}<span style='font-size:11px;opacity:.5'>{c['time'][-5:]}</span></span>"
-                "</div>"
-                f"<div style='font-size:12px;opacity:.65;margin-top:4px'>{status_dot} {prefix}{c['preview']}</div>"
-                "</div>"
-            )
-            st.markdown(card, unsafe_allow_html=True)
-            if st.button("فتح المحادثة", key=f"conv_{c['id']}", use_container_width=True):
-                ss.chat_open = c["id"]; st.rerun()
-            st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
+def _cs_inbox(uid, pwd):
+    counts = oc.get_inbox_counts(uid, pwd)
 
-    # ── Tab 2: Tickets (existing) ──
-    with tab2:
-        if ss.cs_open:
-            ticket = ss.cs_open
-            if st.button("← التذاكر"):
-                ss.cs_open = None; st.rerun()
-            st.markdown(f"**{ticket['customer']}** — {ticket['issue']}")
-            for msg in oc.get_ticket_messages(uid, pwd, ticket["id"]):
-                st.markdown(f"<div class='task-row'><b style='font-size:12px'>{msg['author']}</b><br>{msg['text']}<br><span style='color:#aaa;font-size:10px'>{msg['date']}</span></div>", unsafe_allow_html=True)
-            reply = st.text_input(t("reply"), key="cs_reply")
-            if st.button(t("post"), type="primary"):
-                if reply.strip():
-                    oc.reply_ticket(uid, pwd, ticket["id"], reply); st.success("✓"); st.rerun()
-        else:
-            for tk in oc.get_tickets(uid, pwd):
-                if st.button(f"💬 {tk['customer']} — {tk['issue'][:30]}  ·  {tk['status']}", key=f"tk_{tk['id']}", use_container_width=True):
-                    ss.cs_open = tk; st.rerun()
+    # Due reminders surface at the top of the inbox
+    due = oc.get_due_reminders(uid, pwd)
+    if due:
+        st.markdown(
+            f"<div style='background:rgba(212,168,83,.12);border:1px solid rgba(212,168,83,.35);"
+            f"border-radius:10px;padding:8px 12px;margin-bottom:8px'>"
+            f"⏰ <b>{len(due)} تذكير مستحق</b></div>", unsafe_allow_html=True)
+        for r in due[:5]:
+            rm = oc.CHANNEL_META.get(r["channel"], {"icon": "•"})
+            if st.button(f"⏰ {rm['icon']} {r['customer']} — {r['note'] or 'متابعة'}",
+                         key=f"due_{r['id']}", use_container_width=True):
+                ss.chat_open = r["id"]; st.rerun()
+        st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
 
-    # ── Tab 3: Order status ──
-    with tab3:
+    st.markdown(f"<div style='font-size:12px;opacity:.7;margin-bottom:6px'>"
+                f"📥 {counts['open']} مفتوحة · {counts['unread']} غير مقروءة</div>",
+                unsafe_allow_html=True)
+
+    # Filters
+    fc1, fc2 = st.columns(2)
+    ch_opts = ["all"] + list(oc.CHANNEL_META.keys())
+    channel_f = fc1.selectbox("القناة", ch_opts,
+        format_func=lambda k: "كل القنوات" if k == "all" else f"{oc.CHANNEL_META[k]['icon']} {oc.CHANNEL_META[k]['ar']}",
+        key="cs_channel_f")
+    status_f = fc2.selectbox("الحالة", ["all", "open", "answered", "closed"],
+        format_func=lambda k: {"all": "الكل", "open": "مفتوحة", "answered": "تم الرد", "closed": "مغلقة"}[k],
+        key="cs_status_f")
+
+    convs = oc.get_conversations(uid, pwd, channel_f, status_f)
+    for c in convs:
+        m = oc.CHANNEL_META.get(c["channel"], {"icon": "•", "color": "#888", "ar": ""})
+        unread_badge = f"<span style='background:#E07070;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700'>{c['unread']}</span>" if c["unread"] else ""
+        status_dot = {"open": "🟢", "answered": "🔵", "closed": "⚪"}.get(c["status"], "")
+        prefix = "↩️ " if c["last_dir"] == "out" else ""
+        # Label chips on the conversation card
+        clabels = oc.get_conversation_labels(uid, pwd, c["id"])
+        chips = "".join(
+            f"<span style='background:{l['color']}22;color:{l['color']};padding:1px 7px;"
+            f"border-radius:10px;font-size:9px;margin-inline-end:3px'>{l['name']}</span>"
+            for l in clabels)
+        card = (
+            "<div class='task-row' style='margin-bottom:4px'>"
+            "<div style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<span style='font-weight:700'>{m['icon']} {c['customer']}</span>"
+            f"<span style='display:flex;gap:6px;align-items:center'>{unread_badge}<span style='font-size:11px;opacity:.5'>{c['time'][-5:]}</span></span>"
+            "</div>"
+            f"<div style='font-size:12px;opacity:.65;margin-top:4px'>{status_dot} {prefix}{c['preview']}</div>"
+            f"{'<div style=\"margin-top:5px\">' + chips + '</div>' if chips else ''}"
+            "</div>"
+        )
+        st.markdown(card, unsafe_allow_html=True)
+        if st.button("فتح المحادثة", key=f"conv_{c['id']}", use_container_width=True):
+            ss.chat_open = c["id"]; st.rerun()
+        st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
+
+    # Secondary tools — tickets + order lookup, tucked away
+    with st.expander("🎫 التذاكر وحالة الطلب"):
         st.caption("ابحث عن طلب لمعرفة حالة التوصيل من يمامة")
         order_no = st.text_input("رقم الطلب", key="cs_order_lookup", placeholder="S02486")
         if order_no.strip():
