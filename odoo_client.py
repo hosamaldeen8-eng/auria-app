@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 15
+CLIENT_VERSION = 16
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1613,12 +1613,16 @@ def get_messages(uid, pwd, conv_id):
     """All messages in a conversation, chronological."""
     msgs = odoo(uid, pwd, "x_auria_message", "search_read",
         [[["x_conversation_id", "=", conv_id]]],
-        {"fields": ["x_body", "x_direction", "x_timestamp", "x_agent_id"],
+        {"fields": ["x_body", "x_direction", "x_timestamp", "x_agent_id",
+                    "x_msg_type", "x_is_note", "x_image"],
          "order": "x_timestamp asc", "limit": 200})
     return [{
         "body": m["x_body"], "direction": m["x_direction"],
         "time": (m.get("x_timestamp") or "")[:16],
         "agent": m["x_agent_id"][1].split(" ")[0] if m.get("x_agent_id") else None,
+        "type": m.get("x_msg_type") or "text",
+        "is_note": m.get("x_is_note", False),
+        "image": m.get("x_image") or None,
     } for m in msgs]
 
 
@@ -1647,6 +1651,115 @@ def send_reply(uid, pwd, conv_id, body):
     odoo(uid, pwd, "x_auria_conversation", "write", [[conv_id], {
         "x_status": "answered", "x_last_message": now, "x_unread": 0,
     }])
+    return True
+
+
+# ── CRM: labels, reminders, triage, canned responses ─────────
+def get_labels(uid, pwd):
+    labs = odoo(uid, pwd, "x_auria_label", "search_read", [[]],
+        {"fields": ["id", "x_name", "x_color"], "order": "x_name"})
+    return [{"id": l["id"], "name": l["x_name"], "color": l.get("x_color") or "#7FB069"} for l in labs]
+
+
+def get_conversation_labels(uid, pwd, conv_id):
+    c = odoo(uid, pwd, "x_auria_conversation", "read", [[conv_id]], {"fields": ["x_label_ids"]})
+    if not c or not c[0].get("x_label_ids"):
+        return []
+    labs = odoo(uid, pwd, "x_auria_label", "read", [c[0]["x_label_ids"]],
+        {"fields": ["id", "x_name", "x_color"]})
+    return [{"id": l["id"], "name": l["x_name"], "color": l.get("x_color") or "#7FB069"} for l in labs]
+
+
+def toggle_conversation_label(uid, pwd, conv_id, label_id):
+    """Add/remove a label on a conversation. Returns the new label list."""
+    c = odoo(uid, pwd, "x_auria_conversation", "read", [[conv_id]], {"fields": ["x_label_ids"]})
+    current = set(c[0].get("x_label_ids", []) if c else [])
+    if label_id in current:
+        current.discard(label_id)
+    else:
+        current.add(label_id)
+    odoo(uid, pwd, "x_auria_conversation", "write", [[conv_id], {"x_label_ids": [(6, 0, list(current))]}])
+    return list(current)
+
+
+def create_label(uid, pwd, name, color="#7FB069"):
+    lid = odoo(uid, pwd, "x_auria_label", "create", [{"x_name": name, "x_color": color}])
+    return lid
+
+
+def mark_conversation_status(uid, pwd, conv_id, status):
+    """status: open / answered / closed. 'closed' = mark as done."""
+    odoo(uid, pwd, "x_auria_conversation", "write", [[conv_id], {"x_status": status}])
+    return True
+
+
+def mark_unread(uid, pwd, conv_id, unread=True):
+    odoo(uid, pwd, "x_auria_conversation", "write",
+         [[conv_id], {"x_unread": 1 if unread else 0,
+                      "x_status": "open" if unread else "answered"}])
+    return True
+
+
+def set_reminder(uid, pwd, conv_id, when_dt, note=""):
+    """when_dt: 'YYYY-MM-DD HH:MM:SS' string or None to clear."""
+    odoo(uid, pwd, "x_auria_conversation", "write",
+         [[conv_id], {"x_reminder": when_dt or False, "x_reminder_note": note or False}])
+    return True
+
+
+def get_due_reminders(uid, pwd):
+    """Conversations whose reminder time has passed — for the agent's queue."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+    convs = odoo(uid, pwd, "x_auria_conversation", "search_read",
+        [[["x_reminder", "!=", False], ["x_reminder", "<=", now]]],
+        {"fields": ["id", "x_customer_name", "x_channel", "x_reminder", "x_reminder_note"],
+         "order": "x_reminder"})
+    return [{"id": c["id"], "customer": c["x_customer_name"], "channel": c["x_channel"],
+             "when": (c.get("x_reminder") or "")[:16], "note": c.get("x_reminder_note") or ""}
+            for c in convs]
+
+
+def assign_conversation(uid, pwd, conv_id, agent_uid):
+    odoo(uid, pwd, "x_auria_conversation", "write", [[conv_id], {"x_agent_id": agent_uid}])
+    return True
+
+
+def get_canned_responses(uid, pwd, category=None):
+    domain = [["x_category", "=", category]] if category else []
+    cans = odoo(uid, pwd, "x_auria_canned", "search_read", [domain],
+        {"fields": ["id", "x_name", "x_body", "x_shortcut", "x_category"], "order": "x_category, x_name"})
+    return [{"id": c["id"], "title": c["x_name"], "body": c["x_body"],
+             "shortcut": c.get("x_shortcut") or "", "category": c.get("x_category") or ""} for c in cans]
+
+
+def create_canned_response(uid, pwd, title, body, shortcut="", category="عام"):
+    cid = odoo(uid, pwd, "x_auria_canned", "create",
+        [{"x_name": title, "x_body": body, "x_shortcut": shortcut, "x_category": category}])
+    return cid
+
+
+def send_reply_full(uid, pwd, conv_id, body, is_note=False, image_b64=None):
+    """Enhanced reply: supports internal notes and image attachments.
+    (Real channel send plugs in here when APIs are wired.)"""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+    conv = odoo(uid, pwd, "x_auria_conversation", "read", [[conv_id]], {"fields": ["x_channel"]})
+    channel = conv[0]["x_channel"] if conv else "facebook"
+    vals = {
+        "x_name": (body or "image")[:20], "x_conversation_id": conv_id,
+        "x_body": body or "", "x_direction": "out", "x_channel": channel,
+        "x_timestamp": now, "x_agent_id": uid,
+        "x_msg_type": "image" if image_b64 else ("note" if is_note else "text"),
+        "x_is_note": is_note,
+    }
+    if image_b64:
+        vals["x_image"] = image_b64
+    odoo(uid, pwd, "x_auria_message", "create", [vals])
+    # Internal notes don't change conversation status; replies mark answered
+    if not is_note:
+        odoo(uid, pwd, "x_auria_conversation", "write",
+             [[conv_id], {"x_status": "answered", "x_last_message": now, "x_unread": 0}])
     return True
 
 
