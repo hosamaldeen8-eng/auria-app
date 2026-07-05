@@ -121,6 +121,7 @@ ss.setdefault("so_open", None)
 ss.setdefault("chat_open", None)
 ss.setdefault("so_lines", [])
 ss.setdefault("so_selected_cust", None)
+ss.setdefault("so_rowcount", 3)
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -1220,26 +1221,62 @@ def _create_so_form(uid, pwd):
 
     st.markdown("<hr style='margin:10px 0'>", unsafe_allow_html=True)
 
-    # Products
+    # ── Products: inline rows (product + qty + live price display) ──
+    st.markdown("<div style='font-size:12px;opacity:.7'>🛍️ المنتجات</div>", unsafe_allow_html=True)
     prods = oc.get_sellable_products(uid, pwd)
-    pnames = [f"{p['code']+' ' if p['code'] else ''}{p['name']}" for p in prods]
-    if "so_lines" not in ss:
-        ss.so_lines = []
-    lc1, lc2, lc3 = st.columns([3, 1, 1])
-    pi = lc1.selectbox("المنتج", range(len(pnames)), format_func=lambda i: pnames[i], key="so_prod")
-    qty = lc2.number_input("كمية", min_value=1.0, value=1.0, step=1.0, key="so_qty")
-    price = lc3.number_input("سعر", min_value=0.0, value=float(prods[pi]["price"]) if prods else 0.0, step=5.0, key="so_price")
-    if st.button("➕ أضف المنتج", key="so_addline", use_container_width=True):
-        ss.so_lines.append({"pid": prods[pi]["id"], "name": prods[pi]["name"], "qty": qty, "price": price})
+    pnames = ["— اختر —"] + [f"{p['code']+' ' if p['code'] else ''}{p['name']}" for p in prods]
 
-    if ss.so_lines:
-        total = sum(l["qty"] * l["price"] for l in ss.so_lines)
-        for li, l in enumerate(ss.so_lines):
-            dcol1, dcol2 = st.columns([5, 1])
-            dcol1.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:6px 12px'><span>{l['name'][:26]} ×{l['qty']:g}</span><span style='color:#D4A853'>{l['qty']*l['price']:,.0f}</span></div>", unsafe_allow_html=True)
-            if dcol2.button("🗑️", key=f"so_delline_{li}", use_container_width=True):
-                ss.so_lines.pop(li); st.rerun()
-        st.markdown(f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:6px 0'>الإجمالي: {total:,.0f} د.ل</div>", unsafe_allow_html=True)
+    # Start with 3 rows; "add another" grows the count
+    if "so_rowcount" not in ss:
+        ss.so_rowcount = 3
+
+    # Column header
+    hc1, hc2, hc3 = st.columns([3, 1, 1.2])
+    hc1.markdown("<div style='font-size:10px;opacity:.5'>المنتج</div>", unsafe_allow_html=True)
+    hc2.markdown("<div style='font-size:10px;opacity:.5'>الكمية</div>", unsafe_allow_html=True)
+    hc3.markdown("<div style='font-size:10px;opacity:.5;text-align:left'>السعر (د.ل)</div>", unsafe_allow_html=True)
+
+    built_lines = []
+    running_total = 0.0
+    for row in range(ss.so_rowcount):
+        rc1, rc2, rc3 = st.columns([3, 1, 1.2])
+        sel = rc1.selectbox("م", range(len(pnames)),
+                            format_func=lambda i: pnames[i],
+                            key=f"so_row_prod_{row}", label_visibility="collapsed")
+        qty = rc2.number_input("ك", min_value=1.0, value=1.0, step=1.0,
+                               key=f"so_row_qty_{row}", label_visibility="collapsed")
+        if sel > 0:
+            prod = prods[sel - 1]  # offset for the "— اختر —" placeholder
+            line_price = float(prod["price"])
+            line_total = line_price * qty
+            running_total += line_total
+            # Non-editable price display — reflects the chosen product live
+            rc3.markdown(
+                f"<div style='background:rgba(212,168,83,.10);border:1px solid rgba(212,168,83,.25);"
+                f"border-radius:8px;padding:7px 10px;text-align:left;color:#D4A853;font-weight:600;"
+                f"font-variant-numeric:tabular-nums'>{line_price:,.0f}</div>",
+                unsafe_allow_html=True)
+            built_lines.append({"pid": prod["id"], "name": prod["name"],
+                                "qty": qty, "price": line_price})
+        else:
+            rc3.markdown(
+                "<div style='background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);"
+                "border-radius:8px;padding:7px 10px;text-align:left;opacity:.35'>—</div>",
+                unsafe_allow_html=True)
+
+    # Add another product line
+    ac1, ac2 = st.columns([1, 1])
+    if ac1.button("➕ منتج آخر", key="so_addrow", use_container_width=True):
+        ss.so_rowcount += 1; st.rerun()
+    if ss.so_rowcount > 3 and ac2.button("➖ أقل", key="so_delrow", use_container_width=True):
+        ss.so_rowcount -= 1; st.rerun()
+
+    # Store the built lines for the create action
+    ss.so_lines = built_lines
+    if built_lines:
+        st.markdown(
+            f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:8px 0'>"
+            f"الإجمالي: {running_total:,.0f} د.ل</div>", unsafe_allow_html=True)
 
     # ── Delivery (Accurate/Yamamah) fields ──
     st.markdown("<hr style='margin:10px 0'>", unsafe_allow_html=True)
@@ -1300,6 +1337,7 @@ def _create_so_form(uid, pwd):
             if ok:
                 ss.so_lines = []
                 ss.so_selected_cust = None
+                ss.so_rowcount = 3
                 st.success(f"تم إنشاء {res['name']} ✓")
                 ss.so_open = res["id"]; st.rerun()
             else:
