@@ -108,6 +108,27 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
+  /* Float the send button INSIDE the chat text box (bottom-left for RTL). */
+  div[class*="st-key-floatsend"] { position:relative; }
+  div[class*="st-key-floatsend"] [data-testid="stTextArea"] textarea {
+    padding-bottom:44px; border-radius:16px; background:#1A231A;
+    border:1px solid #2A3A2A; font-size:14px; }
+  div[class*="st-key-floatsend"] .stButton {
+    position:absolute; bottom:10px; left:10px; width:auto; z-index:5; margin:0; }
+  div[class*="st-key-floatsend"] .stButton>button {
+    width:40px; height:40px; min-height:40px; border-radius:50%; padding:0;
+    font-size:17px; background:#7FB069 !important; color:#141B14 !important;
+    border:none !important; box-shadow:0 2px 8px rgba(127,176,105,.4); }
+  div[class*="st-key-floatsend"] .stButton>button:hover {
+    background:#8FC079 !important; transform:scale(1.05); }
+  /* Search inputs: magnifier icon floating inside the box (right, RTL). */
+  div[class*="st-key-searchbox"] { position:relative; }
+  div[class*="st-key-searchbox"] [data-testid="stTextInput"] input {
+    padding-inline-end:38px; border-radius:22px; background:#1A231A;
+    border:1px solid #2A3A2A; }
+  div[class*="st-key-searchbox"]::before {
+    content:"🔍"; position:absolute; top:9px; right:14px; font-size:15px;
+    opacity:.55; z-index:3; pointer-events:none; }
   /* Chat header: keep in one row, vertically centered. */
   div[class*="st-key-btnrow_chathdr"] [data-testid="stHorizontalBlock"] {
     align-items:center !important; }
@@ -519,7 +540,8 @@ def tasks_screen():
                       label_visibility="collapsed", key="task_scope")
     status_f = fc2.selectbox("الحالة", list(TASK_FILTERS.keys()),
                              format_func=lambda k: TASK_FILTERS[k], key="task_status_f")
-    query = st.text_input(t("search"), key="task_search", placeholder="اسم المهمة...")
+    with st.container(key="searchbox_task"):
+        query = st.text_input(t("search"), key="task_search", placeholder="اسم المهمة...", label_visibility="collapsed")
 
     scope_key = "mine" if scope == t("mine") else "all"
     tasks = oc.get_tasks(uid, pwd, scope_key)
@@ -1259,8 +1281,9 @@ def sales_screen():
 def _create_so_form(uid, pwd):
     # ── Customer: live search across ALL Odoo contacts by phone/name ──
     st.markdown("<div style='font-size:12px;opacity:.7'>👤 العميل</div>", unsafe_allow_html=True)
-    cust_q = st.text_input("ابحث برقم الهاتف أو الاسم", key="so_cust_q",
-                           placeholder="اكتب رقم الهاتف أو الاسم...", label_visibility="collapsed")
+    with st.container(key="searchbox_cust"):
+        cust_q = st.text_input("ابحث برقم الهاتف أو الاسم", key="so_cust_q",
+                               placeholder="اكتب رقم الهاتف أو الاسم...", label_visibility="collapsed")
     customer_id = None
     new_cust = None
 
@@ -1881,11 +1904,13 @@ def _chat_view(uid, pwd, conv_id):
     st.markdown("</div>", unsafe_allow_html=True)
 
     if not is_note_mode:
-        reply = st.text_area("اكتب رسالة...", value=ss.get(f"chat_draft_{conv_id}", ""),
-                             key=f"chat_reply_{conv_id}", label_visibility="collapsed",
-                             placeholder="اكتب رسالة...", height=70)
+        with st.container(key=f"floatsend_{conv_id}"):
+            reply = st.text_area("اكتب رسالة...", value=ss.get(f"chat_draft_{conv_id}", ""),
+                                 key=f"chat_reply_{conv_id}", label_visibility="collapsed",
+                                 placeholder="اكتب رسالة...", height=80)
+            send = st.button("➤", key=f"chat_send_{conv_id}", type="primary")
         img = st.file_uploader("📎 صورة", type=["png", "jpg", "jpeg"], key=f"chat_img_{conv_id}")
-        if st.button(f"إرسال إلى {m['ar']} ➤", type="primary", use_container_width=True, key=f"chat_send_{conv_id}"):
+        if send:
             image_b64 = None
             if img:
                 import base64 as _b64
