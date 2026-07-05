@@ -890,6 +890,112 @@ def po_cancel(uid, pwd, po_id):
         return False, _clean_odoo_error(e)
 
 
+# ── PROCUREMENT: RFQ creation + payment lifecycle ────────────
+def get_suppliers(uid, pwd, query=""):
+    domain = [["supplier_rank", ">", 0]]
+    if query:
+        domain.append(["name", "ilike", query])
+    sups = odoo(uid, pwd, "res.partner", "search_read", [domain],
+        {"fields": ["id", "name"], "limit": 40, "order": "name"})
+    return [{"id": s["id"], "name": s["name"]} for s in sups]
+
+
+def get_purchasable_products(uid, pwd):
+    prods = odoo(uid, pwd, "product.product", "search_read",
+        [[["purchase_ok", "=", True]]],
+        {"fields": ["id", "name", "default_code", "standard_price"], "order": "name"})
+    return [{"id": p["id"], "name": p["name"],
+             "code": p.get("default_code") or "",
+             "cost": p.get("standard_price", 0)} for p in prods]
+
+
+def create_rfq(uid, pwd, supplier_id, lines):
+    """Create a draft RFQ. lines = [(product_id, qty, price), ...].
+    Returns (ok, po_id_or_msg)."""
+    try:
+        order_lines = [(0, 0, {
+            "product_id": pid, "product_qty": qty, "price_unit": price,
+        }) for pid, qty, price in lines if qty > 0]
+        if not order_lines:
+            return False, "أضف منتجاً واحداً على الأقل"
+        po_id = odoo(uid, pwd, "purchase.order", "create", [{
+            "partner_id": supplier_id,
+            "order_line": order_lines,
+        }])
+        name = odoo(uid, pwd, "purchase.order", "read", [[po_id]], {"fields": ["name"]})
+        return True, {"id": po_id, "name": name[0]["name"]}
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def get_po_payment(uid, pwd, po_id):
+    """Payment/bill status for a PO — drives the payment step UI."""
+    p = odoo(uid, pwd, "purchase.order", "read", [[po_id]],
+        {"fields": ["invoice_ids", "invoice_status", "state", "amount_total"]})
+    if not p:
+        return None
+    p = p[0]
+    PAY = {"not_paid": "لم يُدفع", "in_payment": "قيد الدفع", "paid": "مدفوع",
+           "partial": "مدفوع جزئياً", "reversed": "معكوس", "blocked": "محظور"}
+    bills = []
+    if p.get("invoice_ids"):
+        recs = odoo(uid, pwd, "account.move", "read", [p["invoice_ids"]],
+            {"fields": ["name", "state", "payment_state", "amount_total", "amount_residual"]})
+        for b in recs:
+            bills.append({
+                "id": b["id"], "name": b["name"], "state": b["state"],
+                "payment": b.get("payment_state") or "not_paid",
+                "payment_ar": PAY.get(b.get("payment_state"), b.get("payment_state") or "—"),
+                "total": b["amount_total"], "residual": b.get("amount_residual", 0),
+            })
+    return {
+        "invoice_status": p.get("invoice_status"),
+        "can_bill": p["state"] == "purchase" and p.get("invoice_status") == "to invoice",
+        "bills": bills,
+        "total": p["amount_total"],
+    }
+
+
+def create_bill(uid, pwd, po_id):
+    """Create the vendor bill from a confirmed PO. Returns (ok, msg)."""
+    try:
+        odoo(uid, pwd, "purchase.order", "action_create_invoice", [[po_id]])
+        return True, "تم إنشاء الفاتورة ✓"
+    except Exception as e:
+        if "cannot marshal None" in str(e):
+            return True, "تم إنشاء الفاتورة ✓"
+        return False, _clean_odoo_error(e)
+
+
+def confirm_payment(uid, pwd, bill_id):
+    """Post the bill then mark as paid (register full payment). Returns (ok, msg)."""
+    try:
+        # Post if still draft
+        bill = odoo(uid, pwd, "account.move", "read", [[bill_id]], {"fields": ["state", "payment_state"]})
+        if bill and bill[0]["state"] == "draft":
+            try:
+                odoo(uid, pwd, "account.move", "action_post", [[bill_id]])
+            except Exception as e:
+                if "cannot marshal None" not in str(e):
+                    raise
+        # Register payment via the payment register wizard
+        try:
+            wiz = odoo(uid, pwd, "account.payment.register", "create", [{
+                "line_ids": False,
+            }], {"context": {"active_model": "account.move", "active_ids": [bill_id]}})
+            odoo(uid, pwd, "account.payment.register", "action_create_payments", [[wiz]])
+        except Exception as e:
+            if "cannot marshal None" not in str(e):
+                # Fallback: some configs use a simpler flow
+                return False, _clean_odoo_error(e)
+        b2 = odoo(uid, pwd, "account.move", "read", [[bill_id]], {"fields": ["payment_state"]})
+        if b2 and b2[0]["payment_state"] in ("paid", "in_payment"):
+            return True, "تم تأكيد الدفع ✓"
+        return True, "تم تسجيل الدفع"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
 # ── OPERATIONS ───────────────────────────────────────────────
 # ── OPERATIONS: two-stage delivery flow ──────────────────────
 # Stage 1: Pick From FG to Alyamama (type 3, internal) — ready/waiting to send

@@ -689,6 +689,44 @@ def procurement_screen():
 
     # ── Tab 1: PO Management ──
     with tab1:
+        # Create RFQ
+        with st.expander("➕ إنشاء طلب شراء جديد"):
+            sups = oc.get_suppliers(uid, pwd)
+            sup_names = [s["name"] for s in sups]
+            si = st.selectbox("المورّد", range(len(sup_names)),
+                              format_func=lambda i: sup_names[i], key="rfq_sup")
+            prods = oc.get_purchasable_products(uid, pwd)
+            pnames = [f"{p['code']+' ' if p['code'] else ''}{p['name']}" for p in prods]
+            # Build up lines in session
+            if "rfq_lines" not in ss:
+                ss.rfq_lines = []
+            lc1, lc2, lc3 = st.columns([3, 1, 1])
+            pi = lc1.selectbox("المنتج", range(len(pnames)),
+                               format_func=lambda i: pnames[i], key="rfq_prod")
+            qty = lc2.number_input("كمية", min_value=1.0, value=1.0, step=1.0, key="rfq_qty")
+            price = lc3.number_input("سعر", min_value=0.0, value=float(prods[pi]["cost"]) if prods else 0.0, step=1.0, key="rfq_price")
+            if st.button("➕ أضف المنتج", key="rfq_addline", use_container_width=True):
+                ss.rfq_lines.append({"pid": prods[pi]["id"], "name": prods[pi]["name"], "qty": qty, "price": price})
+            # Show added lines
+            if ss.rfq_lines:
+                total = sum(l["qty"] * l["price"] for l in ss.rfq_lines)
+                for idx, l in enumerate(ss.rfq_lines):
+                    st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:6px 12px'><span>{l['name'][:28]} ×{l['qty']:g}</span><span style='color:#D4A853'>{l['qty']*l['price']:,.0f}</span></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:6px 0'>الإجمالي: {total:,.0f} د.ل</div>", unsafe_allow_html=True)
+                cc1, cc2 = st.columns(2)
+                if cc1.button("🗑️ مسح", key="rfq_clear", use_container_width=True):
+                    ss.rfq_lines = []; st.rerun()
+                if cc2.button("✅ إنشاء الطلب", key="rfq_create", type="primary", use_container_width=True):
+                    lines = [(l["pid"], l["qty"], l["price"]) for l in ss.rfq_lines]
+                    ok, res = oc.create_rfq(uid, pwd, sups[si]["id"], lines)
+                    if ok:
+                        ss.rfq_lines = []
+                        st.success(f"تم إنشاء {res['name']} ✓")
+                        ss.po_open = res["id"]; st.rerun()
+                    else:
+                        st.error(res)
+
+        st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
         f1, f2 = st.columns([2, 3])
         po_state = f1.selectbox("الحالة", ["all", "draft", "sent", "purchase", "done", "cancel"],
             format_func=lambda k: {"all": "الكل", "draft": "طلب عرض", "sent": "مُرسل",
@@ -780,6 +818,33 @@ def _po_detail(uid, pwd, po_id):
         for r in d["receipts"]:
             st_ar = {"done": "✅ تم", "assigned": "🟡 جاهز", "confirmed": "🟠 بانتظار", "cancel": "ملغي"}.get(r["state"], r["state"])
             st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span style='font-family:monospace;font-size:12px'>{r['name']}</span><span style='font-size:11px'>{st_ar}</span></div>", unsafe_allow_html=True)
+
+    # ── Payment lifecycle ──
+    if d["state"] == "purchase":
+        st.markdown("**الفوترة والدفع**")
+        pay = oc.get_po_payment(uid, pwd, po_id)
+        if pay:
+            if pay["can_bill"] and not pay["bills"]:
+                st.info("الطلب مؤكد وجاهز للفوترة")
+                if st.button("🧾 إنشاء الفاتورة", use_container_width=True, type="primary"):
+                    ok, msg = oc.create_bill(uid, pwd, po_id)
+                    st.success(msg) if ok else st.error(msg)
+                    if ok: st.rerun()
+            for b in pay["bills"]:
+                pay_col = {"مدفوع": "#7FB069", "مدفوع جزئياً": "#D4A853"}.get(b["payment_ar"], "#E07070")
+                state_ar = {"draft": "مسودة", "posted": "مُرحّلة", "cancel": "ملغاة"}.get(b["state"], b["state"])
+                st.markdown(f"""<div class='task-row'>
+                    <div style='display:flex;justify-content:space-between'>
+                      <span style='font-family:monospace;font-size:12px'>{b['name']}</span>
+                      <span style='color:{pay_col};font-size:12px;font-weight:600'>{b['payment_ar']}</span>
+                    </div>
+                    <div style='font-size:11px;opacity:.7;margin-top:3px'>{state_ar} · {b['total']:,.0f} د.ل{f" · متبقّي {b['residual']:,.0f}" if b['residual'] else ""}</div>
+                </div>""", unsafe_allow_html=True)
+                if b["payment"] not in ("paid", "in_payment"):
+                    if st.button("💵 تأكيد الدفع", key=f"pay_{b['id']}", use_container_width=True, type="primary"):
+                        ok, msg = oc.confirm_payment(uid, pwd, b["id"])
+                        st.success(msg) if ok else st.error(msg)
+                        if ok: st.rerun()
 
 
 def _expenses_tab(uid, pwd):
