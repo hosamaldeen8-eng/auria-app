@@ -383,19 +383,13 @@ def mo_detail_screen():
         st.error("لم يتم العثور على الأمر")
         return
 
-    # Auto-refresh every 15s while a timer is running (keeps clock live)
-    if mo["any_running"]:
-        try:
-            from streamlit_autorefresh import st_autorefresh
-            st_autorefresh(interval=15000, key="mo_tick")
-        except Exception:
-            pass  # graceful if package missing
+    # Smooth client-side clocks below advance without page refresh.
 
-    # ── Header card with LIVE total production time ──
-    hrs = int(mo["total_elapsed_min"] // 60)
-    mins = int(mo["total_elapsed_min"] % 60)
+    # ── Header card with SMOOTH LIVE production clock (client-side JS) ──
     state_ar = {"progress":"🟡 جاري","confirmed":"🟢 مؤكد","done":"⚪ منتهي","draft":"◻️ مسودة","to_close":"🔵 للإغلاق"}.get(mo["state"], mo["state"])
     running_badge = "<span style='color:#7FB069'>● يعمل الآن</span>" if mo["any_running"] else ""
+    base_sec = mo["total_elapsed_sec"]
+    running = "true" if mo["any_running"] else "false"
     st.markdown(f"""<div class='greeting'>
         <div style='display:flex;justify-content:space-between;align-items:start'>
           <div>
@@ -404,11 +398,30 @@ def mo_detail_screen():
             <div style='font-size:12px;opacity:.7;margin-top:2px'>{mo['qty']:g} وحدة · {state_ar} {running_badge}</div>
           </div>
           <div style='text-align:center;background:rgba(255,255,255,.08);border-radius:10px;padding:8px 14px'>
-            <div style='font-size:22px;font-weight:700;color:#7FB069'>{hrs}:{mins:02d}</div>
+            <div id='auria-clock' style='font-size:22px;font-weight:700;color:#7FB069;font-variant-numeric:tabular-nums;letter-spacing:.5px'>—:—:—</div>
             <div style='font-size:9px;opacity:.6'>ساعة إنتاج ⏱</div>
           </div>
         </div>
-    </div>""", unsafe_allow_html=True)
+    </div>
+    <script>
+    (function(){{
+      var base = {base_sec}, running = {running};
+      var t0 = Date.now();
+      function fmt(s){{
+        s = Math.max(0, Math.floor(s));
+        var h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+        return h + ':' + String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
+      }}
+      function tick(){{
+        var el = window.parent.document.getElementById('auria-clock');
+        if(!el){{ return; }}
+        var extra = running ? (Date.now()-t0)/1000 : 0;
+        el.textContent = fmt(base + extra);
+        if(running){{ requestAnimationFrame(tick); }}
+      }}
+      tick();
+    }})();
+    </script>""", unsafe_allow_html=True)
 
     # ── MO actions ──
     c0, c1, c2 = st.columns(3)
@@ -432,9 +445,12 @@ def mo_detail_screen():
     st.markdown("**مراحل العمل**")
     for w in mo["workorders"]:
         pct = min(100, round(w["elapsed"] / w["expected"] * 100)) if w["expected"] else 0
-        e_h, e_m = int(w["elapsed"] // 60), int(w["elapsed"] % 60)
         dot = "🟢" if w["working"] else "⚪"
         state_ar = {"progress":"جاري","ready":"جاهز","waiting":"بانتظار","pending":"معلق","done":"✓ منتهي","cancel":"ملغي"}.get(w["state"], w["state"])
+        worker_txt = f"· 🟢 {w['worker']}" if w.get("worker") else ""
+        wclock_id = f"wo-clock-{w['id']}"
+        w_base = w["elapsed_sec"]
+        w_running = "true" if w["working"] else "false"
         st.markdown(f"""<div class='task-row'>
             <div style='display:flex;justify-content:space-between'>
               <b>{w['name']}</b>
@@ -444,10 +460,18 @@ def mo_detail_screen():
               <div style='width:{pct}%;height:100%;background:{"#E07070" if pct>100 else "#7FB069"}'></div>
             </div>
             <div style='display:flex;justify-content:space-between;font-size:11px;opacity:.7;margin-top:3px'>
-              <span>⏱ {e_h}:{e_m:02d} {f"· 🟢 يعمل الآن: {w['worker']}" if w.get('worker') else ""}</span>
+              <span>⏱ <span id='{wclock_id}' style='font-variant-numeric:tabular-nums'>—:—:—</span> {worker_txt}</span>
               <span>متوقع: {w['expected']:g} دقيقة</span>
             </div>
-        </div>""", unsafe_allow_html=True)
+        </div>
+        <script>
+        (function(){{
+          var base={w_base}, running={w_running}, t0=Date.now();
+          function fmt(s){{s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');}}
+          function tick(){{var el=window.parent.document.getElementById('{wclock_id}');if(!el)return;var e=running?(Date.now()-t0)/1000:0;el.textContent=fmt(base+e);if(running)requestAnimationFrame(tick);}}
+          tick();
+        }})();
+        </script>""", unsafe_allow_html=True)
         if w["state"] not in ("done", "cancel"):
             b1, b2, b3 = st.columns(3)
             with b1:

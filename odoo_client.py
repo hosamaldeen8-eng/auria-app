@@ -445,6 +445,7 @@ def get_mo_detail(uid, pwd, mo_id):
                 "state": w["state"], "working": bool(open_log),
                 "worker": worker,
                 "elapsed": round(elapsed, 1),
+                "elapsed_sec": round(elapsed * 60),  # for smooth client counter
                 "expected": round(w["duration_expected"], 1),
                 "workcenter": w["workcenter_id"][1] if w.get("workcenter_id") else "",
                 "running_since": running_since,
@@ -459,6 +460,7 @@ def get_mo_detail(uid, pwd, mo_id):
         "components": components,
         "workorders": workorders,
         "total_elapsed_min": round(total_elapsed, 1),
+        "total_elapsed_sec": round(total_elapsed * 60),  # for smooth client counter
         "any_running": any(w["working"] for w in workorders),
     }
 
