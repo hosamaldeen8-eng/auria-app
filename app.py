@@ -108,6 +108,7 @@ ss.setdefault("op_pick_open", None)
 ss.setdefault("po_open", None)
 ss.setdefault("so_open", None)
 ss.setdefault("chat_open", None)
+ss.setdefault("so_lines", [])
 
 def t(key):
     return T[ss.lang].get(key, key)
@@ -1127,6 +1128,11 @@ def sales_screen():
         _so_detail(uid, pwd, ss.so_open)
         return
 
+    # ── Create new sales order ──
+    with st.expander("➕ إنشاء طلب بيع جديد"):
+        _create_so_form(uid, pwd)
+
+    st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
     st.markdown("**طلبات البيع**")
     f1, f2 = st.columns([2, 3])
     so_state = f1.selectbox("الحالة", ["sale", "draft", "sent", "all", "cancel"],
@@ -1165,6 +1171,79 @@ def sales_screen():
         st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
 
 
+def _create_so_form(uid, pwd):
+    # Customer
+    custs = oc.get_customers(uid, pwd)
+    cust_labels = [f"{c['name']} · {c['mobile']}" for c in custs] + ["➕ عميل جديد"]
+    ci = st.selectbox("العميل", range(len(cust_labels)),
+                      format_func=lambda i: cust_labels[i], key="so_cust")
+    new_cust = None
+    if ci == len(custs):  # new customer
+        nc1, nc2 = st.columns(2)
+        nc_name = nc1.text_input("اسم العميل", key="so_nc_name")
+        nc_mobile = nc2.text_input("الجوال", key="so_nc_mobile", placeholder="+218 9X XXXXXXX")
+        nc_addr = st.text_input("العنوان", key="so_nc_addr")
+        new_cust = (nc_name, nc_mobile, nc_addr)
+
+    # Products
+    prods = oc.get_sellable_products(uid, pwd)
+    pnames = [f"{p['code']+' ' if p['code'] else ''}{p['name']}" for p in prods]
+    if "so_lines" not in ss:
+        ss.so_lines = []
+    lc1, lc2, lc3 = st.columns([3, 1, 1])
+    pi = lc1.selectbox("المنتج", range(len(pnames)), format_func=lambda i: pnames[i], key="so_prod")
+    qty = lc2.number_input("كمية", min_value=1.0, value=1.0, step=1.0, key="so_qty")
+    price = lc3.number_input("سعر", min_value=0.0, value=float(prods[pi]["price"]) if prods else 0.0, step=5.0, key="so_price")
+    if st.button("➕ أضف المنتج", key="so_addline", use_container_width=True):
+        ss.so_lines.append({"pid": prods[pi]["id"], "name": prods[pi]["name"], "qty": qty, "price": price})
+
+    if ss.so_lines:
+        total = sum(l["qty"] * l["price"] for l in ss.so_lines)
+        for l in ss.so_lines:
+            st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:6px 12px'><span>{l['name'][:26]} ×{l['qty']:g}</span><span style='color:#D4A853'>{l['qty']*l['price']:,.0f}</span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:6px 0'>الإجمالي: {total:,.0f} د.ل</div>", unsafe_allow_html=True)
+
+    # Delivery (Accurate) fields
+    st.markdown("<div style='font-size:12px;opacity:.7;margin-top:8px'>🚚 بيانات الشحن (يمامة)</div>", unsafe_allow_html=True)
+    zone_q = st.text_input("ابحث عن المنطقة", key="so_zone_q", placeholder="مثال: طرابلس")
+    zones = oc.get_accurate_zones(uid, pwd, zone_q) if zone_q else []
+    zone_id = None
+    if zones:
+        znames = [z["name"] for z in zones]
+        zi = st.selectbox("المنطقة", range(len(znames)), format_func=lambda i: znames[i], key="so_zone")
+        zone_id = zones[zi]["id"]
+    pay_type = st.selectbox("نوع الدفع", ["COLC", "CASH", "CRDT"],
+        format_func=lambda k: {"COLC": "دفع عند الاستلام (COD)", "CASH": "مدفوع مسبقاً", "CRDT": "آجل"}[k],
+        key="so_paytype")
+
+    cc1, cc2 = st.columns(2)
+    if cc1.button("🗑️ مسح", key="so_clear", use_container_width=True):
+        ss.so_lines = []; st.rerun()
+    if cc2.button("✅ إنشاء الطلب", key="so_create", type="primary", use_container_width=True):
+        if not ss.so_lines:
+            st.error("أضف منتجاً واحداً على الأقل")
+        else:
+            # Resolve customer (existing or new)
+            if new_cust is not None:
+                if not new_cust[0].strip() or not new_cust[1].strip():
+                    st.error("أدخل اسم العميل والجوال"); return
+                ok, cid = oc.create_customer(uid, pwd, new_cust[0], new_cust[1], new_cust[2])
+                if not ok:
+                    st.error(cid); return
+                customer_id = cid
+            else:
+                customer_id = custs[ci]["id"]
+            lines = [(l["pid"], l["qty"], l["price"]) for l in ss.so_lines]
+            delivery = {"zone_id": zone_id, "payment_type": pay_type}
+            ok, res = oc.create_sales_order(uid, pwd, customer_id, lines, delivery)
+            if ok:
+                ss.so_lines = []
+                st.success(f"تم إنشاء {res['name']} ✓")
+                ss.so_open = res["id"]; st.rerun()
+            else:
+                st.error(res)
+
+
 def _so_detail(uid, pwd, so_id):
     if st.button("← طلبات البيع"):
         ss.so_open = None; st.rerun()
@@ -1197,6 +1276,20 @@ def _so_detail(uid, pwd, so_id):
     sh = d["shipment"]
     if not sh:
         st.info("لم تُنشأ شحنة لهذا الطلب بعد.")
+        if d["state"] == "sale":
+            if st.button("🚚 إنشاء شحنة يمامة", use_container_width=True, type="primary", key=f"mkship_{so_id}"):
+                with st.spinner("جارٍ الإرسال ليمامة..."):
+                    ok, msg, info = oc.create_shipment_for_so(uid, pwd, so_id)
+                if ok:
+                    st.success(msg); st.rerun()
+                else:
+                    # API error → the guidance panel will render after rerun once
+                    # shipment exists; if not created, show the raw guidance now
+                    st.error(msg)
+                    if info and info.get("state") == "error":
+                        st.rerun()
+        else:
+            st.caption("أكّد الطلب أولاً لإنشاء الشحنة")
     elif sh["stage"] == "ok":
         track = f"<a href='{sh['tracking_url']}' target='_blank' style='color:#7FB069'>🔗 تتبّع {sh['code']}</a>" if sh["tracking_url"] else ""
         st.markdown(f"<div class='task-row'><div style='color:#7FB069;font-weight:700'>✅ {sh['label']}</div><div style='margin-top:6px'>{track}</div></div>", unsafe_allow_html=True)

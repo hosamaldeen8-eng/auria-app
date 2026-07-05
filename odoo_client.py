@@ -1285,6 +1285,110 @@ def so_confirm(uid, pwd, so_id):
         return False, _clean_odoo_error(e)
 
 
+# ── SALES ORDER CREATION + shipment generation ───────────────
+def get_customers(uid, pwd, query=""):
+    domain = [["customer_rank", ">", 0]]
+    if query:
+        domain += ["|", ["name", "ilike", query], ["mobile", "ilike", query]]
+    custs = odoo(uid, pwd, "res.partner", "search_read", [domain],
+        {"fields": ["id", "name", "mobile", "phone"], "limit": 30, "order": "name"})
+    return [{"id": c["id"], "name": c["name"],
+             "mobile": c.get("mobile") or c.get("phone") or ""} for c in custs]
+
+
+def get_sellable_products(uid, pwd):
+    prods = odoo(uid, pwd, "product.product", "search_read",
+        [[["sale_ok", "=", True]]],
+        {"fields": ["id", "name", "default_code", "list_price"], "order": "name"})
+    return [{"id": p["id"], "name": p["name"],
+             "code": p.get("default_code") or "",
+             "price": p.get("list_price", 0)} for p in prods]
+
+
+def get_accurate_zones(uid, pwd, query=""):
+    domain = [["name", "not like", "test"]]
+    if query:
+        domain.append(["name", "ilike", query])
+    zones = odoo(uid, pwd, "accurate.zone", "search_read", [domain],
+        {"fields": ["id", "name"], "limit": 40, "order": "name"})
+    return [{"id": z["id"], "name": z["name"]} for z in zones]
+
+
+def create_customer(uid, pwd, name, mobile, address=""):
+    """Create a new customer (walk-in / phone order). Returns partner id."""
+    try:
+        pid = odoo(uid, pwd, "res.partner", "create", [{
+            "name": name, "mobile": mobile, "street": address,
+            "customer_rank": 1,
+        }])
+        return True, pid
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def create_sales_order(uid, pwd, customer_id, lines, delivery=None):
+    """Create a draft SO with optional Accurate delivery fields.
+    lines = [(product_id, qty, price), ...]
+    delivery = {zone_id, subzone_id, mobile, payment_type} (optional)
+    Returns (ok, {id, name} or msg)."""
+    try:
+        order_lines = [(0, 0, {
+            "product_id": pid, "product_uom_qty": qty, "price_unit": price,
+        }) for pid, qty, price in lines if qty > 0]
+        if not order_lines:
+            return False, "أضف منتجاً واحداً على الأقل"
+        vals = {"partner_id": customer_id, "order_line": order_lines}
+        if delivery:
+            if delivery.get("zone_id"):
+                vals["accurate_recipient_zone_id"] = delivery["zone_id"]
+            if delivery.get("subzone_id"):
+                vals["accurate_recipient_subzone_id"] = delivery["subzone_id"]
+            if delivery.get("payment_type"):
+                vals["accurate_payment_type_code"] = delivery["payment_type"]
+        so_id = odoo(uid, pwd, "sale.order", "create", [vals])
+        name = odoo(uid, pwd, "sale.order", "read", [[so_id]], {"fields": ["name"]})
+        return True, {"id": so_id, "name": name[0]["name"]}
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def create_shipment_for_so(uid, pwd, so_id):
+    """Generate the Accurate shipment from a confirmed SO, then report the
+    outcome so the UI can guide through any API errors.
+    Returns (ok, msg, shipment_info)."""
+    # Try known Accurate module method names on sale.order
+    created = False
+    for method in ("action_create_accurate_shipment", "action_create_shipment",
+                   "action_send_to_accurate", "create_accurate_shipment",
+                   "button_create_shipment"):
+        try:
+            odoo(uid, pwd, "sale.order", method, [[so_id]])
+            created = True
+            break
+        except Exception as e:
+            if "cannot marshal None" in str(e):
+                created = True
+                break
+            # method doesn't exist → try next; other errors → surface
+            if "object has no attribute" in str(e) or "does not exist" in str(e):
+                continue
+            # a real error (e.g. missing field) → report it
+            return False, _clean_odoo_error(e), None
+    if not created:
+        return False, "تعذّر إنشاء الشحنة — تحقّق من إعداد يمامة", None
+    # Read back the shipment + any API error
+    so = odoo(uid, pwd, "sale.order", "read", [[so_id]],
+        {"fields": ["accurate_shipment_ids", "accurate_tracking_url", "accurate_status_name"]})
+    if not so or not so[0].get("accurate_shipment_ids"):
+        return True, "تم إنشاء الطلب — لم تُنشأ شحنة بعد", None
+    sid = so[0]["accurate_shipment_ids"][-1]
+    sh = odoo(uid, pwd, "accurate.shipment", "read", [[sid]],
+        {"fields": ["state", "error_message", "tracking_url", "code", "api_status_name"]})[0]
+    if sh["state"] == "error":
+        return False, sh.get("error_message", "خطأ من واجهة يمامة"), {"id": sid, "state": "error"}
+    return True, f"تم إنشاء الشحنة ✓ ({sh.get('code') or ''})", {"id": sid, "state": sh["state"]}
+
+
 def fix_shipment_mobile(uid, pwd, shipment_id, new_mobile):
     """Update recipient mobile on a failed shipment (guided fix)."""
     try:
