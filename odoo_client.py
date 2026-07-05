@@ -1388,11 +1388,14 @@ def get_delivery_companies(uid, pwd):
 
 
 def create_customer(uid, pwd, name, mobile, address=""):
-    """Create a new customer (walk-in / phone order). Returns partner id."""
+    """Create a new customer (walk-in / phone order). Returns partner id.
+    This Odoo requires the `phone` field, so we set both phone and mobile
+    to the number provided."""
     try:
+        number = (mobile or "").strip()
         pid = odoo(uid, pwd, "res.partner", "create", [{
-            "name": name, "mobile": mobile, "street": address,
-            "customer_rank": 1,
+            "name": name, "phone": number, "mobile": number,
+            "street": address, "customer_rank": 1,
         }])
         return True, pid
     except Exception as e:
