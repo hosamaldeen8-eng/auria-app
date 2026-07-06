@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 19
+CLIENT_VERSION = 20
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1087,6 +1087,31 @@ def confirm_payment(uid, pwd, bill_id):
 # ── OPERATIONS: two-stage delivery flow ──────────────────────
 # Stage 1: Pick From FG to Alyamama (type 3, internal) — ready/waiting to send
 # Stage 2: Delivery by Alyamam (type 41, outgoing) → Yamamah API tracks it
+def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200):
+    """Finished-goods transfers made at SJ by production, moving to HD.
+    picking_type 57: SJ/FG-Storage -> HD/FG-Storage. Operations receives them.
+    Default shows ready-to-receive (not done); 'all' includes received."""
+    domain = [["picking_type_id", "=", 57]]
+    if state == "ready":
+        domain.append(["state", "in", ["assigned", "confirmed", "waiting"]])
+    elif state != "all":
+        domain.append(["state", "=", state])
+    if query:
+        domain += ["|", ["name", "ilike", query], ["origin", "ilike", query]]
+    total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
+    picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
+        {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
+         "limit": limit, "order": "scheduled_date asc"})  # oldest first
+    out = PagedList({
+        "id": p["id"], "name": p["name"], "state": p["state"],
+        "order": p.get("origin") or "—",
+        "date": (p.get("scheduled_date") or "")[:10],
+    } for p in picks)
+    out.total = total
+    out.shown = len(picks)
+    return out
+
+
 def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200):
     """Stage 1 pickings: FG → Alyamama warehouse. Default ready+waiting."""
     domain = [["picking_type_id", "=", 3]]

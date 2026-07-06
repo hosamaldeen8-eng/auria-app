@@ -218,7 +218,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 19
+APP_EXPECTS_CLIENT = 20
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1235,7 +1235,7 @@ def operations_screen():
         _op_picking_detail(uid, pwd, ss.op_pick_open)
         return
 
-    tab1, tab2 = st.tabs(["📤 FG ← يمامة", "🚚 يمامة ← العميل"])
+    tab1, tab2, tab3 = st.tabs(["📤 FG ← يمامة", "🚚 يمامة ← العميل", "📥 استلام من SJ"])
 
     # ── Stage 1: FG → Yamamah (default ready+waiting, validate) ──
     with tab1:
@@ -1299,6 +1299,41 @@ def operations_screen():
         if s_total > s_shown:
             if st.button(f"⬇️ تحميل المزيد ({s_total - s_shown} متبقٍ)", key="op2_more", use_container_width=True):
                 ss.op2_limit = ss.get("op2_limit", 200) + 200; st.rerun()
+
+    # ── Stage 3: Receive FG transfers made at SJ by production ──
+    with tab3:
+        st.caption("استلام تحويلات المنتج النهائي القادمة من مصنع SJ — الأقدم أولاً")
+        S3 = {"ready": "🟡 بانتظار الاستلام", "done": "✅ تم الاستلام", "all": "الكل"}
+        f3c1, f3c2 = st.columns([2, 3])
+        s3 = f3c1.selectbox("الحالة", list(S3.keys()), format_func=lambda k: S3[k], key="op_s3_f")
+        q3 = f3c2.text_input(t("search"), key="op_s3_q", placeholder="رقم التحويل أو الطلب")
+        sig3 = f"{s3}|{q3}"
+        if ss.get("op3_sig") != sig3:
+            ss.op3_limit = 200; ss.op3_sig = sig3
+        trs = oc.get_sj_to_hd_transfers(uid, pwd, s3, q3, limit=ss.get("op3_limit", 200))
+        t_total = getattr(trs, "total", len(trs)); t_shown = getattr(trs, "shown", len(trs))
+        st.caption(f"عرض {t_shown} من {t_total} تحويل" if t_total > t_shown else f"{t_total} تحويل")
+        if not trs:
+            st.info("لا توجد تحويلات مطابقة")
+        for tr in trs:
+            st_ar = {"assigned": "🟡 جاهز للاستلام", "confirmed": "🟠 بانتظار",
+                     "waiting": "⚪ ينتظر", "done": "✅ تم الاستلام"}.get(tr["state"], tr["state"])
+            card = (
+                "<div class='task-row' style='margin-bottom:4px'>"
+                "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{tr['name']}</span>"
+                f"<span style='font-size:11px'>{st_ar}</span></div>"
+                f"<div style='font-size:12px;margin:6px 0 3px'>الطلب المصدر: {tr['order']}</div>"
+                f"<div style='font-size:11px;opacity:.6'>📅 {tr['date']}</div>"
+                "</div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
+            if st.button("عرض واستلام ←", key=f"op3_{tr['id']}", use_container_width=True):
+                ss.op_pick_open = tr["id"]; st.rerun()
+            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+        if t_total > t_shown:
+            if st.button(f"⬇️ تحميل المزيد ({t_total - t_shown} متبقٍ)", key="op3_more", use_container_width=True):
+                ss.op3_limit = ss.get("op3_limit", 200) + 200; st.rerun()
 
 
 def sales_screen():
