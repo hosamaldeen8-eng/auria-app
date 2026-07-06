@@ -108,20 +108,6 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
-  /* Pending-action glow: soft herbal-green pulse on buttons that represent
-     work waiting to be received/handled (purchase receipt, transfer receipt).
-     Calm 2.4s cycle — signals 'something is waiting', not urgency. */
-  div[class*="st-key-glowbtn"] .stButton>button {
-    border:1px solid rgba(127,176,105,.45) !important;
-    animation:pendGlow 2.4s ease-in-out infinite; }
-  @keyframes pendGlow {
-    0%,100% { box-shadow:0 0 3px rgba(127,176,105,.25); }
-    50%     { box-shadow:0 0 15px rgba(127,176,105,.60); } }
-  /* Urgent/overdue task: glow the ⋯ popover trigger. */
-  div[class*="st-key-glowbtn_task"] [data-testid="stPopover"] button {
-    border:1px solid rgba(127,176,105,.45) !important;
-    border-radius:8px;
-    animation:pendGlow 2.4s ease-in-out infinite; }
   /* Previous price shown under the product selector — soft glowing line */
   .po-prev-under {
     font-size:11px; color:#9BA58F; padding:3px 10px; margin:2px 4px 6px;
@@ -333,38 +319,41 @@ def _flash(ok, msg):
 
 
 def _glow_tab_with_count():
-    """Inject CSS (once per render) that softly pulses any tab whose label
-    ends in a parenthesized count — used to signal 'pending work in here'
-    on the receiving tabs. Calm herbal-green glow, consistent with the app."""
-    st.markdown("""<style>
-    /* Pulse tabs whose label carries a count like '(3)' — pending work.
-       Streamlit renders each tab button; we glow those with a bracketed
-       number via a soft herbal-green animation. */
-    button[data-baseweb="tab"]:has(p:is([data-glow])) { }
-    @keyframes tabGlow {
-      0%,100% { box-shadow:0 0 3px rgba(127,176,105,.25);
-                background:rgba(127,176,105,.04); }
-      50%     { box-shadow:0 0 14px rgba(127,176,105,.55);
-                background:rgba(127,176,105,.14); } }
-    /* Fallback: target every tab, then JS narrows to counted ones below. */
-    .auria-glow-tab { animation:tabGlow 2.4s ease-in-out infinite;
-      border-radius:8px 8px 0 0; }
-    </style>
+    """Softly pulse any tab whose label ends in a count like '(3)' — signals
+    'pending work in here'. Runs real JS via components.html (st.markdown
+    <script> is sandboxed and won't execute), reaching into the parent doc."""
+    components.html("""
     <script>
     (function(){
       const doc = window.parent.document;
+      if (!doc.getElementById('auria-tabglow-css')) {
+        const s = doc.createElement('style');
+        s.id = 'auria-tabglow-css';
+        s.textContent = `
+          @keyframes auriaTabGlow {
+            0%,100% { box-shadow:0 0 4px rgba(127,176,105,.30);
+                      background:rgba(127,176,105,.05); }
+            50%     { box-shadow:0 0 16px rgba(127,176,105,.65);
+                      background:rgba(127,176,105,.16); } }
+          .auria-glow-tab { animation:auriaTabGlow 2.2s ease-in-out infinite !important;
+            border-radius:8px 8px 0 0 !important; }`;
+        doc.head.appendChild(s);
+      }
       function mark(){
         doc.querySelectorAll('button[data-baseweb="tab"]').forEach(b=>{
           const txt = (b.innerText||'').trim();
-          // Glow only tabs ending in a count > 0, e.g. "... (3)"
           const m = txt.match(/\\((\\d+)\\)\\s*$/);
           if (m && parseInt(m[1])>0) b.classList.add('auria-glow-tab');
           else b.classList.remove('auria-glow-tab');
         });
       }
-      mark(); setInterval(mark, 900);
+      mark();
+      // Re-apply across Streamlit reruns (tabs re-render)
+      if (window.parent._auriaTabGlow) clearInterval(window.parent._auriaTabGlow);
+      window.parent._auriaTabGlow = setInterval(mark, 700);
     })();
-    </script>""", unsafe_allow_html=True)
+    </script>
+    """, height=0)
     """Camera capture that defaults to the phone's REAR camera.
 
     Streamlit's st.camera_input opens the front camera with no toggle. We
@@ -525,12 +514,16 @@ def home_screen():
     st.markdown(f"**{t('dept_snapshot')}**")
     kpis = oc.get_dept_kpis(uid, pwd, info["dept"])
     if kpis:
-        # KPI cards; "Active MOs" is tappable → opens the production MO list
+        # KPI cards; "Active MOs" is tappable → opens the production MO list.
+        # Sized to match the plain metric-card exactly.
         st.markdown("""<style>
         div[class*="st-key-kpi_"] .stButton>button {
             background:#1E281E; border:1px solid #2E3D2E; border-radius:12px;
-            padding:10px 4px; width:100%; box-shadow:none; min-height:0;
-            white-space:pre-line; line-height:1.3; }
+            padding:14px 4px; width:100%; box-shadow:none; height:auto;
+            white-space:pre-line; line-height:1.35; font-size:13px;
+            color:#C6BEB1; font-weight:400; }
+        div[class*="st-key-kpi_"] .stButton>button:first-line {
+            font-size:22px; font-weight:700; color:#7FB069; }
         div[class*="st-key-kpi_"] .stButton>button:hover {
             border-color:#7FB069; background:#22301F; }
         </style>""", unsafe_allow_html=True)
@@ -672,23 +665,18 @@ def tasks_screen():
                 due_txt = f"<span style='color:{'#A32D2D' if overdue else '#888'}'>{task['due']}</span>" if task["due"] else ""
                 st.markdown(f"{emoji} **{task['name']}**  \n<span class='badge' style='background:#E6F1FB;color:#1A5276'>{task['stage']}</span> · {task['project']} · {due_txt}", unsafe_allow_html=True)
             with c2:
-                # Glow the action affordance only when the task needs attention
-                # (overdue, or high-priority and not done) — keeps calm tasks calm.
-                needs_attention = overdue or (task["priority"] == "1" and not done)
-                _pop_ctx = st.container(key=f"glowbtn_task_{task['id']}") if needs_attention else st.container()
-                with _pop_ctx:
-                    with st.popover("⋯"):
-                        stages = oc.get_project_stages(uid, pwd, task["id"])
-                        st.caption(t("stage"))
-                        if not stages:
-                            st.caption("لا مراحل (مهمة بدون مشروع)")
-                        for sid, sname in stages:
-                            if st.button(sname, key=f"st_{task['id']}_{sid}", use_container_width=True):
-                                oc.set_task_stage(uid, pwd, task["id"], sid); st.rerun()
-                        note = st.text_input(t("log_note"), key=f"note_{task['id']}")
-                        if st.button(t("post"), key=f"post_{task['id']}"):
-                            if note.strip():
-                                oc.post_task_note(uid, pwd, task["id"], note); st.success("✓"); st.rerun()
+                with st.popover("⋯"):
+                    stages = oc.get_project_stages(uid, pwd, task["id"])
+                    st.caption(t("stage"))
+                    if not stages:
+                        st.caption("لا مراحل (مهمة بدون مشروع)")
+                    for sid, sname in stages:
+                        if st.button(sname, key=f"st_{task['id']}_{sid}", use_container_width=True):
+                            oc.set_task_stage(uid, pwd, task["id"], sid); st.rerun()
+                    note = st.text_input(t("log_note"), key=f"note_{task['id']}")
+                    if st.button(t("post"), key=f"post_{task['id']}"):
+                        if note.strip():
+                            oc.post_task_note(uid, pwd, task["id"], note); st.success("✓"); st.rerun()
 
 # ── PRODUCTION ───────────────────────────────────────────────
 # ── MO MANAGEMENT PAGE ───────────────────────────────────────
@@ -967,11 +955,10 @@ def production_screen():
                 "</div>"
             )
             st.markdown(card, unsafe_allow_html=True)
-            with st.container(key=f"glowbtn_rcv_{r['id']}"):
-                if st.button("📥 استلام كامل", key=f"rcv_{r['id']}", use_container_width=True):
-                    ok, msg = oc.validate_picking(uid, pwd, r["id"])
-                    _flash(ok, msg)
-                    if ok: st.rerun()
+            if st.button("📥 استلام كامل", key=f"rcv_{r['id']}", use_container_width=True):
+                ok, msg = oc.validate_picking(uid, pwd, r["id"])
+                _flash(ok, msg)
+                if ok: st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
         st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
@@ -1334,11 +1321,10 @@ def _receiving_tab(uid, pwd):
             "</div>"
         )
         st.markdown(card, unsafe_allow_html=True)
-        with st.container(key=f"glowbtn_prcv_{r['id']}"):
-            if st.button("📥 استلام كامل", key=f"prcv_{r['id']}", use_container_width=True):
-                ok, msg = oc.validate_picking(uid, pwd, r["id"])
-                _flash(ok, msg)
-                if ok: st.rerun()
+        if st.button("📥 استلام كامل", key=f"prcv_{r['id']}", use_container_width=True):
+            ok, msg = oc.validate_picking(uid, pwd, r["id"])
+            _flash(ok, msg)
+            if ok: st.rerun()
         st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
     st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
@@ -1477,9 +1463,8 @@ def operations_screen():
                 "</div>"
             )
             st.markdown(card, unsafe_allow_html=True)
-            with st.container(key=f"glowbtn_op3_{tr['id']}"):
-                if st.button("عرض واستلام ←", key=f"op3_{tr['id']}", use_container_width=True):
-                    ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"; st.rerun()
+            if st.button("عرض واستلام ←", key=f"op3_{tr['id']}", use_container_width=True):
+                ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"; st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         if t_total > t_shown:
             if st.button(f"⬇️ تحميل المزيد ({t_total - t_shown} متبقٍ)", key="op3_more", use_container_width=True):
