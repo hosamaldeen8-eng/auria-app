@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 23
+CLIENT_VERSION = 24
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1040,6 +1040,37 @@ def create_rfq(uid, pwd, supplier_id, lines):
         }])
         name = odoo(uid, pwd, "purchase.order", "read", [[po_id]], {"fields": ["name"]})
         return True, {"id": po_id, "name": name[0]["name"]}
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def create_vendor(uid, pwd, name, phone="", email="", city=""):
+    """Create a new supplier/vendor contact. Returns (ok, id_or_msg).
+    Odoo requires 'mobile' on contacts, so mobile defaults to phone."""
+    try:
+        if not name or not name.strip():
+            return False, "اسم المورّد مطلوب"
+        vals = {"name": name.strip(), "supplier_rank": 1, "company_type": "company"}
+        if phone:
+            vals["phone"] = phone
+            vals["mobile"] = phone  # Odoo constraint: mobile required
+        if email:
+            vals["email"] = email
+        if city:
+            vals["city"] = city
+        vid = odoo(uid, pwd, "res.partner", "create", [vals])
+        return True, vid
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def send_rfq(uid, pwd, po_id):
+    """Submit an RFQ — moves draft → sent (marks it formally issued to the
+    supplier). Returns (ok, msg)."""
+    try:
+        # button_confirm would jump to purchase; to just 'send' we set state=sent
+        odoo(uid, pwd, "purchase.order", "write", [[po_id], {"state": "sent"}])
+        return True, "تم إرسال طلب العرض ✓"
     except Exception as e:
         return False, _clean_odoo_error(e)
 

@@ -218,7 +218,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 23
+APP_EXPECTS_CLIENT = 24
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -966,42 +966,89 @@ def procurement_screen():
 
     # ── Tab 1: PO Management ──
     with tab1:
-        # Create RFQ
+        # Create RFQ / PO
         with st.expander("➕ إنشاء طلب شراء جديد"):
+            # ── Vendor: select existing OR create new ──
             sups = oc.get_suppliers(uid, pwd)
-            sup_names = [s["name"] for s in sups]
+            sup_names = ["➕ مورّد جديد"] + [s["name"] for s in sups]
             si = st.selectbox("المورّد", range(len(sup_names)),
                               format_func=lambda i: sup_names[i], key="rfq_sup")
+
+            supplier_id = None
+            if si == 0:
+                # Inline new-vendor form
+                st.markdown("<div style='font-size:12px;opacity:.7;margin-top:4px'>مورّد جديد</div>", unsafe_allow_html=True)
+                nv1, nv2 = st.columns(2)
+                nv_name = nv1.text_input("اسم المورّد", key="nv_name", placeholder="اسم الشركة/المورّد")
+                nv_phone = nv2.text_input("الهاتف", key="nv_phone", placeholder="+218...")
+                nv3, nv4 = st.columns(2)
+                nv_email = nv3.text_input("البريد", key="nv_email", placeholder="اختياري")
+                nv_city = nv4.text_input("المدينة", key="nv_city", placeholder="اختياري")
+                if nv_name.strip():
+                    st.caption(f"سيُنشأ المورّد: {nv_name.strip()}")
+            else:
+                supplier_id = sups[si - 1]["id"]
+
+            # ── Product lines — sales-order style: inline rows, live cost ──
             prods = oc.get_purchasable_products(uid, pwd)
             pnames = [f"{p['code']+' ' if p['code'] else ''}{p['name']}" for p in prods]
-            # Build up lines in session
-            if "rfq_lines" not in ss:
-                ss.rfq_lines = []
-            lc1, lc2, lc3 = st.columns([3, 1, 1])
-            pi = lc1.selectbox("المنتج", range(len(pnames)),
-                               format_func=lambda i: pnames[i], key="rfq_prod")
-            qty = lc2.number_input("كمية", min_value=1.0, value=1.0, step=1.0, key="rfq_qty")
-            price = lc3.number_input("سعر", min_value=0.0, value=float(prods[pi]["cost"]) if prods else 0.0, step=1.0, key="rfq_price")
-            if st.button("➕ أضف المنتج", key="rfq_addline", use_container_width=True):
-                ss.rfq_lines.append({"pid": prods[pi]["id"], "name": prods[pi]["name"], "qty": qty, "price": price})
-            # Show added lines
-            if ss.rfq_lines:
-                total = sum(l["qty"] * l["price"] for l in ss.rfq_lines)
-                for idx, l in enumerate(ss.rfq_lines):
-                    st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:6px 12px'><span>{l['name'][:28]} ×{l['qty']:g}</span><span style='color:#D4A853'>{l['qty']*l['price']:,.0f}</span></div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:6px 0'>الإجمالي: {total:,.0f} د.ل</div>", unsafe_allow_html=True)
-                cc1, cc2 = st.columns(2)
-                if cc1.button("🗑️ مسح", key="rfq_clear", use_container_width=True):
-                    ss.rfq_lines = []; st.rerun()
-                if cc2.button("✅ إنشاء الطلب", key="rfq_create", type="primary", use_container_width=True):
-                    lines = [(l["pid"], l["qty"], l["price"]) for l in ss.rfq_lines]
-                    ok, res = oc.create_rfq(uid, pwd, sups[si]["id"], lines)
-                    if ok:
-                        ss.rfq_lines = []
-                        st.success(f"تم إنشاء {res['name']} ✓")
-                        ss.po_open = res["id"]; st.rerun()
-                    else:
-                        st.error(res)
+            ss.setdefault("po_rowcount", 3)
+            ss.setdefault("po_rows", {})
+
+            st.markdown("<div style='font-size:12px;opacity:.7;margin-top:8px'>المنتجات</div>", unsafe_allow_html=True)
+            po_lines = []
+            for r in range(ss.po_rowcount):
+                rc1, rc2, rc3 = st.columns([3, 1, 1.2])
+                pidx = rc1.selectbox("منتج", range(len(pnames)),
+                    format_func=lambda i: pnames[i], key=f"po_prod_{r}", label_visibility="collapsed")
+                qty = rc2.number_input("كمية", min_value=0.0, value=0.0, step=1.0,
+                    key=f"po_qty_{r}", label_visibility="collapsed")
+                # Live cost display (non-editable, pulled from product) — like sales orders
+                unit_cost = float(prods[pidx]["cost"]) if prods else 0.0
+                rc3.markdown(
+                    f"<div style='padding:7px 4px;text-align:center;font-size:12px;color:#D4A853'>"
+                    f"{unit_cost:,.2f}</div>", unsafe_allow_html=True)
+                if qty > 0 and prods:
+                    po_lines.append({"pid": prods[pidx]["id"], "name": prods[pidx]["name"],
+                                     "qty": qty, "price": unit_cost})
+
+            ar1, ar2 = st.columns(2)
+            if ar1.button("➕ منتج آخر", key="po_addrow", use_container_width=True):
+                ss.po_rowcount += 1; st.rerun()
+            if ar2.button("➖ أقل", key="po_delrow", use_container_width=True) and ss.po_rowcount > 1:
+                ss.po_rowcount -= 1; st.rerun()
+
+            # Running total
+            if po_lines:
+                total = sum(l["qty"] * l["price"] for l in po_lines)
+                st.markdown(
+                    f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:8px 0'>"
+                    f"الإجمالي: {total:,.0f} د.ل</div>", unsafe_allow_html=True)
+
+            # ── Create action ──
+            if st.button("✅ إنشاء طلب الشراء", key="po_create", type="primary", use_container_width=True):
+                # Resolve vendor (create new if needed)
+                if si == 0:
+                    if not ss.get("nv_name", "").strip():
+                        st.error("أدخل اسم المورّد الجديد"); st.stop()
+                    okv, res = oc.create_vendor(uid, pwd, ss.nv_name,
+                                                ss.get("nv_phone", ""), ss.get("nv_email", ""),
+                                                ss.get("nv_city", ""))
+                    if not okv:
+                        st.error(res); st.stop()
+                    supplier_id = res
+                if not supplier_id:
+                    st.error("اختر مورّداً"); st.stop()
+                if not po_lines:
+                    st.error("أضف منتجاً واحداً على الأقل"); st.stop()
+                lines = [(l["pid"], l["qty"], l["price"]) for l in po_lines]
+                ok, res = oc.create_rfq(uid, pwd, supplier_id, lines)
+                if ok:
+                    ss.po_rowcount = 3
+                    st.success(f"تم إنشاء {res['name']} ✓")
+                    ss.po_open = res["id"]; st.rerun()
+                else:
+                    st.error(res)
 
         st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
         f1, f2 = st.columns([2, 3])
@@ -1063,10 +1110,28 @@ def _po_detail(uid, pwd, po_id):
         </div>
     </div>""", unsafe_allow_html=True)
 
-    # Actions
-    if d["state"] in ("draft", "sent"):
+    # Actions — RFQ → PO submission flow
+    if d["state"] == "draft":
+        # Draft RFQ: send to supplier, or confirm directly, or cancel
+        st.caption("طلب عرض (RFQ) — أرسله للمورّد أو أكّده مباشرة")
+        c1, c2, c3 = st.columns(3)
+        if c1.button("📤 إرسال للمورّد", use_container_width=True):
+            ok, msg = oc.send_rfq(uid, pwd, po_id)
+            _flash(ok, msg)
+            if ok: st.rerun()
+        if c2.button("🟢 تأكيد الأمر", use_container_width=True, type="primary"):
+            ok, msg = oc.po_confirm(uid, pwd, po_id)
+            _flash(ok, msg)
+            if ok: st.rerun()
+        if c3.button("✖️ إلغاء", use_container_width=True):
+            ok, msg = oc.po_cancel(uid, pwd, po_id)
+            _flash(ok, msg)
+            if ok: st.rerun()
+    elif d["state"] == "sent":
+        # RFQ sent: confirm into a real PO, or cancel
+        st.caption("تم إرسال طلب العرض — بانتظار التأكيد ليصبح أمر شراء")
         c1, c2 = st.columns(2)
-        if c1.button("🟢 تأكيد الأمر", use_container_width=True, type="primary"):
+        if c1.button("🟢 تأكيد أمر الشراء", use_container_width=True, type="primary"):
             ok, msg = oc.po_confirm(uid, pwd, po_id)
             _flash(ok, msg)
             if ok: st.rerun()
