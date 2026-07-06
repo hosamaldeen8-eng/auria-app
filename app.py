@@ -108,16 +108,19 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
-  /* PO/product rows: keep horizontal but respect the 3:1:1.2 width ratio
-     (don't force equal columns) so the product selector stays wide. */
+  /* PO/product rows: keep horizontal but respect the 2.6:1:1.1:1.2 width
+     ratio (product · qty · prev price · new price) so it doesn't force equal. */
   div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1),
   div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1) {
-    flex:3 1 0 !important; }
+    flex:2.6 1 0 !important; }
   div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2),
   div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {
     flex:1 1 0 !important; }
   div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3),
   div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3) {
+    flex:1.1 1 0 !important; }
+  div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(4),
+  div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(4) {
     flex:1.2 1 0 !important; }
   /* Float the send button INSIDE the chat text box (bottom-left for RTL). */
   div[class*="st-key-floatsend"] { position:relative; }
@@ -1007,28 +1010,32 @@ def procurement_screen():
             ss.setdefault("po_rows", {})
 
             st.markdown("<div style='font-size:12px;opacity:.7;margin-top:8px'>المنتجات</div>", unsafe_allow_html=True)
-            # Column headers (Product · Quantity · Price)
+            # Column headers (Product · Quantity · Previous · New price)
             with st.container(key="btnrow_pohdr"):
-                hh1, hh2, hh3 = st.columns([3, 1, 1.2])
+                hh1, hh2, hh3, hh4 = st.columns([2.6, 1, 1.1, 1.2])
                 hh1.markdown("<div style='font-size:10px;opacity:.55;text-align:center'>المنتج</div>", unsafe_allow_html=True)
                 hh2.markdown("<div style='font-size:10px;opacity:.55;text-align:center'>الكمية</div>", unsafe_allow_html=True)
-                hh3.markdown("<div style='font-size:10px;opacity:.55;text-align:center'>السعر</div>", unsafe_allow_html=True)
+                hh3.markdown("<div style='font-size:10px;opacity:.55;text-align:center'>السعر السابق</div>", unsafe_allow_html=True)
+                hh4.markdown("<div style='font-size:10px;opacity:.55;text-align:center'>السعر الجديد</div>", unsafe_allow_html=True)
             po_lines = []
             for r in range(ss.po_rowcount):
                 with st.container(key=f"btnrow_porow_{r}"):
-                    rc1, rc2, rc3 = st.columns([3, 1, 1.2])
+                    rc1, rc2, rc3, rc4 = st.columns([2.6, 1, 1.1, 1.2])
                     pidx = rc1.selectbox("منتج", range(len(pnames)),
                         format_func=lambda i: pnames[i], key=f"po_prod_{r}", label_visibility="collapsed")
                     qty = rc2.number_input("كمية", min_value=0.0, value=0.0, step=1.0,
                         key=f"po_qty_{r}", label_visibility="collapsed")
-                    # Live cost display (non-editable, pulled from product) — like sales orders
-                    unit_cost = float(prods[pidx]["cost"]) if prods else 0.0
+                    # Previous price = product's stored cost (reference, non-editable)
+                    prev_cost = float(prods[pidx]["cost"]) if prods else 0.0
                     rc3.markdown(
-                        f"<div style='padding:7px 4px;text-align:center;font-size:12px;color:#D4A853'>"
-                        f"{unit_cost:,.2f}</div>", unsafe_allow_html=True)
+                        f"<div style='padding:7px 4px;text-align:center;font-size:12px;color:#9BA58F'>"
+                        f"{prev_cost:,.2f}</div>", unsafe_allow_html=True)
+                    # New price = what the supplier is quoting now (editable, defaults to previous)
+                    new_price = rc4.number_input("سعر جديد", min_value=0.0, value=prev_cost, step=0.5,
+                        key=f"po_price_{r}", label_visibility="collapsed")
                 if qty > 0 and prods:
                     po_lines.append({"pid": prods[pidx]["id"], "name": prods[pidx]["name"],
-                                     "qty": qty, "price": unit_cost})
+                                     "qty": qty, "price": new_price, "prev": prev_cost})
 
             ar1, ar2 = st.columns(2)
             if ar1.button("➕ منتج آخر", key="po_addrow", use_container_width=True):
@@ -1039,9 +1046,12 @@ def procurement_screen():
             # Running total
             if po_lines:
                 total = sum(l["qty"] * l["price"] for l in po_lines)
+                changed = [l for l in po_lines if abs(l["price"] - l["prev"]) > 0.001]
                 st.markdown(
                     f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:8px 0'>"
                     f"الإجمالي: {total:,.0f} د.ل</div>", unsafe_allow_html=True)
+                if changed:
+                    st.caption(f"⚠️ {len(changed)} منتج بسعر مختلف عن السعر السابق")
 
             # ── Create action ──
             if st.button("✅ إنشاء طلب الشراء", key="po_create", type="primary", use_container_width=True):
