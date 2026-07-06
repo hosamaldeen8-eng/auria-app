@@ -354,6 +354,9 @@ def _glow_tab_with_count():
     })();
     </script>
     """, height=0)
+
+
+def _rear_camera(key, label="📸 صوّر الإيصال"):
     """Camera capture that defaults to the phone's REAR camera.
 
     Streamlit's st.camera_input opens the front camera with no toggle. We
