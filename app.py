@@ -635,6 +635,8 @@ def tasks_screen():
                 with st.popover("⋯"):
                     stages = oc.get_project_stages(uid, pwd, task["id"])
                     st.caption(t("stage"))
+                    if not stages:
+                        st.caption("لا مراحل (مهمة بدون مشروع)")
                     for sid, sname in stages:
                         if st.button(sname, key=f"st_{task['id']}_{sid}", use_container_width=True):
                             oc.set_task_stage(uid, pwd, task["id"], sid); st.rerun()

@@ -258,6 +258,8 @@ def get_tasks(uid, pwd, scope="mine"):
 
 def get_project_stages(uid, pwd, task_id):
     task = odoo(uid, pwd, "project.task", "read", [[task_id]], {"fields": ["project_id"]})
+    if not task or not task[0].get("project_id"):
+        return []  # task has no project (e.g. a personal onboarding task)
     proj = task[0]["project_id"][0]
     stages = odoo(uid, pwd, "project.task.type", "search_read",
         [[["project_ids", "in", [proj]]]], {"fields": ["id", "name"], "order": "sequence"})
