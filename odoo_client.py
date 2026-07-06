@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 24
+CLIENT_VERSION = 25
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1172,6 +1172,33 @@ def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200):
     out = PagedList({
         "id": p["id"], "name": p["name"], "state": p["state"],
         "order": p.get("origin") or "—",
+        "date": (p.get("scheduled_date") or "")[:10],
+    } for p in picks)
+    out.total = total
+    out.shown = len(picks)
+    return out
+
+
+def get_yamamah_returns(uid, pwd, state="ready", query="", limit=200):
+    """Returns coming back from Yamamah/Alyamama into HD stock.
+    picking_type 60: Alyamama WH -> HD/FG-Storage. Operations validates them
+    to receive returned goods back into inventory.
+    Default shows pending (not done); 'all' includes validated."""
+    domain = [["picking_type_id", "=", 60]]
+    if state == "ready":
+        domain.append(["state", "in", ["assigned", "confirmed", "waiting"]])
+    elif state != "all":
+        domain.append(["state", "=", state])
+    if query:
+        domain += ["|", ["name", "ilike", query], ["origin", "ilike", query]]
+    total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
+    picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
+        {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
+         "limit": limit, "order": "scheduled_date asc"})  # oldest first
+    out = PagedList({
+        "id": p["id"], "name": p["name"], "state": p["state"],
+        "origin": p.get("origin") or "—",
+        "customer": p["partner_id"][1] if p.get("partner_id") else "—",
         "date": (p.get("scheduled_date") or "")[:10],
     } for p in picks)
     out.total = total

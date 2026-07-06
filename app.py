@@ -241,7 +241,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 24
+APP_EXPECTS_CLIENT = 25
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1374,13 +1374,16 @@ def operations_screen():
         _op_picking_detail(uid, pwd, ss.op_pick_open, mode=ss.get("op_pick_mode", "delivery"))
         return
 
-    # Live count of pending SJ→HD transfers drives the tab label + glow
+    # Live counts drive the receiving tabs' labels + glow
     _sj_pending = oc.get_sj_to_hd_transfers(uid, pwd, "ready", "", limit=200)
     _n_sj = getattr(_sj_pending, "total", len(_sj_pending))
     _sj_label = f"📥 استلام من SJ ({_n_sj})" if _n_sj else "📥 استلام من SJ"
-    if _n_sj:
+    _ret_pending = oc.get_yamamah_returns(uid, pwd, "ready", "", limit=200)
+    _n_ret = getattr(_ret_pending, "total", len(_ret_pending))
+    _ret_label = f"↩️ مرتجعات يمامة ({_n_ret})" if _n_ret else "↩️ مرتجعات يمامة"
+    if _n_sj or _n_ret:
         _glow_tab_with_count()
-    tab1, tab2, tab3 = st.tabs(["📤 FG ← يمامة", "🚚 يمامة ← العميل", _sj_label])
+    tab1, tab2, tab3, tab4 = st.tabs(["📤 FG ← يمامة", "🚚 يمامة ← العميل", _sj_label, _ret_label])
 
     # ── Stage 1: FG → Yamamah (default ready+waiting, validate) ──
     with tab1:
@@ -1483,6 +1486,41 @@ def operations_screen():
         if t_total > t_shown:
             if st.button(f"⬇️ تحميل المزيد ({t_total - t_shown} متبقٍ)", key="op3_more", use_container_width=True):
                 ss.op3_limit = ss.get("op3_limit", 200) + 200; st.rerun()
+
+    # ── Tab 4: Validate returns coming back from Yamamah ──
+    with tab4:
+        st.caption("مرتجعات يمامة — استلام البضائع المرتجعة إلى المخزون، الأقدم أولاً")
+        S4 = {"ready": "🟡 بانتظار التأكيد", "done": "✅ تم الاستلام", "all": "الكل"}
+        f4c1, f4c2 = st.columns([2, 3])
+        s4 = f4c1.selectbox("الحالة", list(S4.keys()), format_func=lambda k: S4[k], key="op_s4_f")
+        q4 = f4c2.text_input(t("search"), key="op_s4_q", placeholder="رقم المرتجع أو الطلب")
+        sig4 = f"{s4}|{q4}"
+        if ss.get("op4_sig") != sig4:
+            ss.op4_limit = 200; ss.op4_sig = sig4
+        rets = oc.get_yamamah_returns(uid, pwd, s4, q4, limit=ss.get("op4_limit", 200))
+        r_total = getattr(rets, "total", len(rets)); r_shown = getattr(rets, "shown", len(rets))
+        st.caption(f"عرض {r_shown} من {r_total} مرتجع" if r_total > r_shown else f"{r_total} مرتجع")
+        if not rets:
+            st.info("لا توجد مرتجعات مطابقة")
+        for rt in rets:
+            st_ar = {"assigned": "🟡 جاهز للاستلام", "confirmed": "🟠 بانتظار",
+                     "waiting": "⚪ ينتظر", "done": "✅ تم الاستلام"}.get(rt["state"], rt["state"])
+            card = (
+                "<div class='task-row' style='margin-bottom:4px'>"
+                "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<span style='font-family:monospace;font-size:11px;background:rgba(224,112,112,.12);color:#E07070;padding:3px 9px;border-radius:7px'>{rt['name']}</span>"
+                f"<span style='font-size:11px'>{st_ar}</span></div>"
+                f"<div style='font-size:12px;margin:6px 0 3px'>{rt['origin']}</div>"
+                f"<div style='font-size:11px;opacity:.6'>📅 {rt['date']}</div>"
+                "</div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
+            if st.button("عرض وتأكيد الاستلام ←", key=f"op4_{rt['id']}", use_container_width=True):
+                ss.op_pick_open = rt["id"]; ss.op_pick_mode = "return"; st.rerun()
+            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+        if r_total > r_shown:
+            if st.button(f"⬇️ تحميل المزيد ({r_total - r_shown} متبقٍ)", key="op4_more", use_container_width=True):
+                ss.op4_limit = ss.get("op4_limit", 200) + 200; st.rerun()
 
 
 def sales_screen():
@@ -1960,6 +1998,13 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
             <div style='font-size:15px;font-weight:700;margin-top:4px'>تحويل داخلي</div>
             <div style='font-size:12px;opacity:.75;margin-top:4px'>من سراج (SJ) إلى حي دمشق (HD)</div>
         </div>""", unsafe_allow_html=True)
+    elif mode == "return":
+        # Return from Yamamah — no delivery contact; show return context
+        st.markdown(f"""<div class='greeting'>
+            <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['name']}</div>
+            <div style='font-size:15px;font-weight:700;margin-top:4px'>↩️ مرتجع من يمامة</div>
+            <div style='font-size:12px;opacity:.75;margin-top:4px'>{d.get('origin') or 'استلام البضائع المرتجعة إلى المخزون'}</div>
+        </div>""", unsafe_allow_html=True)
     else:
         # Yamamah delivery — customer contact is relevant
         st.markdown(f"""<div class='greeting'>
@@ -1973,7 +2018,10 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
         st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span>{l['name']}</span><span style='opacity:.8'>{l['done']:g}/{l['qty']:g}</span></div>", unsafe_allow_html=True)
 
     if d["state"] not in ("done", "cancel"):
-        btn_label = "📥 تأكيد الاستلام في حي دمشق" if mode == "receive" else "✅ تأكيد التسليم ليمامة"
+        btn_label = {
+            "receive": "📥 تأكيد الاستلام في حي دمشق",
+            "return": "↩️ تأكيد استلام المرتجع",
+        }.get(mode, "✅ تأكيد التسليم ليمامة")
         if st.button(btn_label, type="primary", use_container_width=True):
             ok, msg = oc.validate_picking(uid, pwd, picking_id)
             if ok:
@@ -1981,7 +2029,10 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
             else:
                 st.error(msg)
     else:
-        done_msg = "تم استلام هذا التحويل" if mode == "receive" else "تم تأكيد هذا الطلب مسبقاً"
+        done_msg = {
+            "receive": "تم استلام هذا التحويل",
+            "return": "تم استلام هذا المرتجع",
+        }.get(mode, "تم تأكيد هذا الطلب مسبقاً")
         st.info(done_msg)
 
 
