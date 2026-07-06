@@ -332,7 +332,39 @@ def _flash(ok, msg):
         st.error(text)
 
 
-def _rear_camera(key, label="📸 صوّر الإيصال"):
+def _glow_tab_with_count():
+    """Inject CSS (once per render) that softly pulses any tab whose label
+    ends in a parenthesized count — used to signal 'pending work in here'
+    on the receiving tabs. Calm herbal-green glow, consistent with the app."""
+    st.markdown("""<style>
+    /* Pulse tabs whose label carries a count like '(3)' — pending work.
+       Streamlit renders each tab button; we glow those with a bracketed
+       number via a soft herbal-green animation. */
+    button[data-baseweb="tab"]:has(p:is([data-glow])) { }
+    @keyframes tabGlow {
+      0%,100% { box-shadow:0 0 3px rgba(127,176,105,.25);
+                background:rgba(127,176,105,.04); }
+      50%     { box-shadow:0 0 14px rgba(127,176,105,.55);
+                background:rgba(127,176,105,.14); } }
+    /* Fallback: target every tab, then JS narrows to counted ones below. */
+    .auria-glow-tab { animation:tabGlow 2.4s ease-in-out infinite;
+      border-radius:8px 8px 0 0; }
+    </style>
+    <script>
+    (function(){
+      const doc = window.parent.document;
+      function mark(){
+        doc.querySelectorAll('button[data-baseweb="tab"]').forEach(b=>{
+          const txt = (b.innerText||'').trim();
+          // Glow only tabs ending in a count > 0, e.g. "... (3)"
+          const m = txt.match(/\\((\\d+)\\)\\s*$/);
+          if (m && parseInt(m[1])>0) b.classList.add('auria-glow-tab');
+          else b.classList.remove('auria-glow-tab');
+        });
+      }
+      mark(); setInterval(mark, 900);
+    })();
+    </script>""", unsafe_allow_html=True)
     """Camera capture that defaults to the phone's REAR camera.
 
     Streamlit's st.camera_input opens the front camera with no toggle. We
@@ -502,6 +534,8 @@ def home_screen():
         pend = oc.get_pending_movements(uid, pwd)
         n_tr, n_rc = len(pend["transfers"]), len(pend["receipts"])
         st.markdown(f"**الحركات غير المُنجزة** <span style='opacity:.5;font-size:11px'>({n_tr} تحويل · {n_rc} استلام)</span>", unsafe_allow_html=True)
+        if n_rc:
+            _glow_tab_with_count()  # pulse the PO-receipts tab when work is waiting
         pt1, pt2 = st.tabs([f"🔄 تحويلات ({n_tr})", f"📥 استلامات PO ({n_rc})"])
 
         with pt1:
@@ -1005,7 +1039,12 @@ def procurement_screen():
         _po_detail(uid, pwd, ss.po_open)
         return
 
-    tab1, tab2, tab3 = st.tabs(["🛒 أوامر الشراء", "🧾 المصروفات", "🔄 الاستلام"])
+    # Live count of pending receipts drives the tab label + glow
+    n_pending = len(oc.get_pending_receipts(uid, pwd))
+    recv_label = f"🔄 الاستلام ({n_pending})" if n_pending else "🔄 الاستلام"
+    if n_pending:
+        _glow_tab_with_count()  # pulse the receiving tab when work is waiting
+    tab1, tab2, tab3 = st.tabs(["🛒 أوامر الشراء", "🧾 المصروفات", recv_label])
 
     # ── Tab 1: PO Management ──
     with tab1:
