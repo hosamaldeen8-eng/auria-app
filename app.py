@@ -1032,12 +1032,15 @@ def procurement_screen():
                     rc1, rc2, rc4, rc5 = st.columns([2.6, 1, 1.1, 1.1])
                     pidx = rc1.selectbox("منتج", range(len(pnames)),
                         format_func=lambda i: pnames[i], key=f"po_prod_{r}", label_visibility="collapsed")
-                    qty = rc2.number_input("كمية", min_value=0.0, value=0.0, step=1.0,
-                        key=f"po_qty_{r}", label_visibility="collapsed")
+                    qty_val = rc2.number_input("كمية", min_value=0.0, value=None, step=1.0,
+                        key=f"po_qty_{r}", label_visibility="collapsed", placeholder="0")
+                    qty = qty_val or 0.0
                     prev_cost = float(prods[pidx]["cost"]) if prods else 0.0
-                    # New price — editable, defaults to previous
-                    new_price = rc4.number_input("سعر جديد", min_value=0.0, value=prev_cost, step=0.5,
-                        key=f"po_price_{r}", label_visibility="collapsed")
+                    # New price — editable, empty by default (placeholder shows previous)
+                    price_val = rc4.number_input("سعر جديد", min_value=0.0, value=None, step=0.5,
+                        key=f"po_price_{r}", label_visibility="collapsed",
+                        placeholder=f"{prev_cost:g}")
+                    new_price = price_val if price_val is not None else prev_cost
                     # Total — quantity × new price, live
                     line_total = qty * new_price
                     rc5.markdown(
@@ -1597,8 +1600,9 @@ def _create_so_form(uid, pwd):
         sel = rc1.selectbox("م", range(len(pnames)),
                             format_func=lambda i: pnames[i],
                             key=f"so_row_prod_{row}", label_visibility="collapsed")
-        qty = rc2.number_input("ك", min_value=1.0, value=1.0, step=1.0,
-                               key=f"so_row_qty_{row}", label_visibility="collapsed")
+        qty_val = rc2.number_input("ك", min_value=1.0, value=None, step=1.0,
+                               key=f"so_row_qty_{row}", label_visibility="collapsed", placeholder="1")
+        qty = qty_val or 1.0
         if sel > 0:
             prod = prods[sel - 1]  # offset for the "— اختر —" placeholder
             line_price = float(prod["price"])
