@@ -164,7 +164,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 18
+APP_EXPECTS_CLIENT = 19
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1190,8 +1190,12 @@ def operations_screen():
         f1c1, f1c2 = st.columns([2, 3])
         s1 = f1c1.selectbox("الحالة", list(S1.keys()), format_func=lambda k: S1[k], key="op_s1_f")
         q1 = f1c2.text_input(t("search"), key="op_s1_q", placeholder="رقم الطلب")
-        picks = oc.get_fg_to_yamamah(uid, pwd, s1, q1)
-        st.caption(f"{len(picks)} طلب")
+        sig1 = f"{s1}|{q1}"
+        if ss.get("op1_sig") != sig1:
+            ss.op1_limit = 200; ss.op1_sig = sig1
+        picks = oc.get_fg_to_yamamah(uid, pwd, s1, q1, limit=ss.get("op1_limit", 200))
+        p_total = getattr(picks, "total", len(picks)); p_shown = getattr(picks, "shown", len(picks))
+        st.caption(f"عرض {p_shown} من {p_total} طلب" if p_total > p_shown else f"{p_total} طلب")
         for p in picks:
             st_ar = {"assigned":"🟡 جاهز","confirmed":"🟠 بانتظار","waiting":"⚪ ينتظر","done":"✅ تم"}.get(p["state"], p["state"])
             card = (
@@ -1207,6 +1211,9 @@ def operations_screen():
             if st.button("عرض وتأكيد ←", key=f"op1_{p['id']}", use_container_width=True):
                 ss.op_pick_open = p["id"]; st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+        if p_total > p_shown:
+            if st.button(f"⬇️ تحميل المزيد ({p_total - p_shown} متبقٍ)", key="op1_more", use_container_width=True):
+                ss.op1_limit = ss.get("op1_limit", 200) + 200; st.rerun()
 
     # ── Stage 2: Yamamah → Customer (live API status) ──
     with tab2:
@@ -1215,8 +1222,12 @@ def operations_screen():
         f2c1, f2c2 = st.columns([2, 3])
         s2 = f2c1.selectbox("الحالة", list(S2.keys()), format_func=lambda k: S2[k], key="op_s2_f")
         q2 = f2c2.text_input(t("search"), key="op_s2_q", placeholder="طلب أو اسم العميل")
-        ships = oc.get_yamamah_to_customer(uid, pwd, s2, q2)
-        st.caption(f"{len(ships)} شحنة")
+        sig2 = f"{s2}|{q2}"
+        if ss.get("op2_sig") != sig2:
+            ss.op2_limit = 200; ss.op2_sig = sig2
+        ships = oc.get_yamamah_to_customer(uid, pwd, s2, q2, limit=ss.get("op2_limit", 200))
+        s_total = getattr(ships, "total", len(ships)); s_shown = getattr(ships, "shown", len(ships))
+        st.caption(f"عرض {s_shown} من {s_total} شحنة" if s_total > s_shown else f"{s_total} شحنة")
         for s in ships:
             meta = oc.YAMAMAH_STATUS.get(s["api_status"], {"color": "#9BA58F", "bg": "rgba(255,255,255,.07)"})
             track = f"<a href='{s['tracking_url']}' target='_blank' style='color:#7FB069;font-size:11px'>🔗 {s['code']}</a>" if s["tracking_url"] else ""
@@ -1231,6 +1242,9 @@ def operations_screen():
                 f"</div><div style='margin-top:5px'>{track}</div></div>"
             )
             st.markdown(card, unsafe_allow_html=True)
+        if s_total > s_shown:
+            if st.button(f"⬇️ تحميل المزيد ({s_total - s_shown} متبقٍ)", key="op2_more", use_container_width=True):
+                ss.op2_limit = ss.get("op2_limit", 200) + 200; st.rerun()
 
 
 def sales_screen():

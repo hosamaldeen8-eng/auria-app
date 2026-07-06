@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 18
+CLIENT_VERSION = 19
 import xmlrpc.client
 import threading
 from datetime import date
@@ -97,6 +97,22 @@ def odoo(uid, pwd, model, method, args=None, kwargs=None):
         _reset_models()
         return _get_models().execute_kw(ODOO_DB, uid, pwd, model, method,
                                         args or [[]], kwargs or {})
+
+
+class PagedList(list):
+    """A list that also carries the true total count for the query, so the
+    UI can show 'showing X of Y' and offer load-more. Backward-compatible
+    with plain-list callers (len() still gives what's loaded)."""
+    total = 0
+    shown = 0
+
+
+def _paged(uid, pwd, model, domain, fields, limit, order):
+    """search_count + search_read in one place, returning a PagedList."""
+    total = odoo(uid, pwd, model, "search_count", [domain])
+    recs = odoo(uid, pwd, model, "search_read", [domain],
+                {"fields": fields, "limit": limit, "order": order})
+    return total, recs
 
 
 def today_str():
@@ -567,12 +583,12 @@ def get_pending_movements(uid, pwd):
         [[["picking_type_id.code", "=", "internal"], ["state", "not in", ["done", "cancel"]]]],
         {"fields": ["id", "name", "state", "picking_type_id", "location_id",
                     "location_dest_id", "scheduled_date"],
-         "limit": 40, "order": "scheduled_date asc"})
+         "limit": 200, "order": "scheduled_date asc"})
     receipts = odoo(uid, pwd, "stock.picking", "search_read",
         [[["picking_type_id.code", "=", "incoming"], ["state", "not in", ["done", "cancel"]]]],
         {"fields": ["id", "name", "state", "partner_id", "origin", "scheduled_date",
                     "picking_type_id", "location_id", "location_dest_id"],
-         "limit": 40, "order": "scheduled_date asc"})
+         "limit": 200, "order": "scheduled_date asc"})
     return {
         "transfers": [_pack(p) for p in transfers],
         "receipts": [_pack(p) for p in receipts],
@@ -862,7 +878,7 @@ def get_pos(uid, pwd, state="all", query=""):
     pos = odoo(uid, pwd, "purchase.order", "search_read", [domain],
         {"fields": ["id", "name", "partner_id", "state", "amount_total", "currency_id",
                     "date_order", "receipt_status", "invoice_status"],
-         "limit": 40, "order": "date_order desc"})
+         "limit": 200, "order": "date_order desc"})
     return [{
         "id": p["id"], "name": p["name"],
         "supplier": p["partner_id"][1] if p.get("partner_id") else "—",
@@ -1071,7 +1087,7 @@ def confirm_payment(uid, pwd, bill_id):
 # ── OPERATIONS: two-stage delivery flow ──────────────────────
 # Stage 1: Pick From FG to Alyamama (type 3, internal) — ready/waiting to send
 # Stage 2: Delivery by Alyamam (type 41, outgoing) → Yamamah API tracks it
-def get_fg_to_yamamah(uid, pwd, state="ready", query=""):
+def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200):
     """Stage 1 pickings: FG → Alyamama warehouse. Default ready+waiting."""
     domain = [["picking_type_id", "=", 3]]
     if state == "ready":
@@ -1080,15 +1096,19 @@ def get_fg_to_yamamah(uid, pwd, state="ready", query=""):
         domain.append(["state", "=", state])
     if query:
         domain += ["|", ["name", "ilike", query], ["origin", "ilike", query]]
+    total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
         {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
-         "limit": 60, "order": "scheduled_date asc"})  # oldest first
-    return [{
+         "limit": limit, "order": "scheduled_date asc"})  # oldest first
+    out = PagedList({
         "id": p["id"], "name": p["name"], "state": p["state"],
         "order": p.get("origin") or "—",
         "customer": p["partner_id"][1] if p.get("partner_id") else "—",
         "date": (p.get("scheduled_date") or "")[:10],
-    } for p in picks]
+    } for p in picks)
+    out.total = total
+    out.shown = len(picks)
+    return out
 
 
 def get_picking_detail(uid, pwd, picking_id):
@@ -1119,7 +1139,7 @@ def get_picking_detail(uid, pwd, picking_id):
     }
 
 
-def get_yamamah_to_customer(uid, pwd, state="all", query=""):
+def get_yamamah_to_customer(uid, pwd, state="all", query="", limit=200):
     """Stage 2: shipments handed to Yamamah, tracked via Accurate API.
     Oldest first, shows live API status."""
     domain = []
@@ -1132,8 +1152,9 @@ def get_yamamah_to_customer(uid, pwd, state="all", query=""):
         {"fields": ["id", "name", "code", "state", "api_status_name", "tracking_url",
                     "sale_id", "recipient_name", "recipient_mobile", "recipient_zone_id",
                     "fee_collection", "date"],
-         "limit": 60, "order": "date asc"})  # oldest first
-    return [{
+         "limit": limit, "order": "date asc"})  # oldest first
+    total = odoo(uid, pwd, "accurate.shipment", "search_count", [domain])
+    out = PagedList({
         "id": s["id"], "name": s["name"], "code": s.get("code", ""),
         "state": s["state"], "api_status": s.get("api_status_name") or "—",
         "tracking_url": s.get("tracking_url", ""),
@@ -1143,7 +1164,10 @@ def get_yamamah_to_customer(uid, pwd, state="all", query=""):
         "zone": s["recipient_zone_id"][1] if s.get("recipient_zone_id") else "—",
         "cod": s.get("fee_collection", 0),
         "date": (s.get("date") or "")[:16],
-    } for s in ships]
+    } for s in ships)
+    out.total = total
+    out.shown = len(ships)
+    return out
 
 
 def get_deliveries(uid, pwd):
@@ -1596,7 +1620,7 @@ def get_orders(uid, pwd, query=""):
         domain = ["|", ["name", "ilike", query], ["partner_id.name", "ilike", query]]
     orders = odoo(uid, pwd, "sale.order", "search_read", [domain],
         {"fields": ["id", "name", "partner_id", "amount_total", "state"],
-         "limit": 30, "order": "date_order desc"})
+         "limit": 200, "order": "date_order desc"})
     return [{
         "id": o["id"], "name": o["name"],
         "customer": o["partner_id"][1] if o["partner_id"] else "—",
@@ -1624,7 +1648,7 @@ def get_conversations(uid, pwd, channel="all", status="all"):
     convs = odoo(uid, pwd, "x_auria_conversation", "search_read", [domain],
         {"fields": ["id", "x_customer_name", "x_customer_handle", "x_channel",
                     "x_status", "x_last_message", "x_unread", "x_agent_id"],
-         "limit": 60, "order": "x_last_message desc"})
+         "limit": 200, "order": "x_last_message desc"})
     out = []
     for c in convs:
         # last message preview
@@ -1905,7 +1929,7 @@ def get_tickets(uid, pwd):
     tickets = odoo(uid, pwd, "project.task", "search_read",
         [[["project_id", "=", DEPT_PROJECT["cs"]]]],
         {"fields": ["id", "name", "stage_id", "partner_id", "create_date"],
-         "limit": 40, "order": "create_date desc"})
+         "limit": 200, "order": "create_date desc"})
     return [{
         "id": t["id"],
         "customer": t["partner_id"][1] if t["partner_id"] else t["name"][:20],
