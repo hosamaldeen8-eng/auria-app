@@ -108,6 +108,17 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
+  /* Previous-price glow pill — soft, slow herbal-green pulse (calm, not harsh) */
+  .po-glow-pill {
+    display:inline-block; font-size:10px; color:#7FB069;
+    background:rgba(127,176,105,.10); border:1px solid rgba(127,176,105,.35);
+    border-radius:10px; padding:2px 10px; margin:2px 4px 6px;
+    animation:poGlow 2.2s ease-in-out infinite; }
+  @keyframes poGlow {
+    0%,100% { box-shadow:0 0 3px rgba(127,176,105,.25); border-color:rgba(127,176,105,.30);
+              background:rgba(127,176,105,.08); }
+    50%     { box-shadow:0 0 14px rgba(127,176,105,.65); border-color:rgba(127,176,105,.75);
+              background:rgba(127,176,105,.18); } }
   /* PO/product rows: keep horizontal but respect the 2.6:1:1.1:1.2 width
      ratio (product · qty · prev price · new price) so it doesn't force equal. */
   div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1),
@@ -1033,7 +1044,20 @@ def procurement_screen():
                     # New price = what the supplier is quoting now (editable, defaults to previous)
                     new_price = rc4.number_input("سعر جديد", min_value=0.0, value=prev_cost, step=0.5,
                         key=f"po_price_{r}", label_visibility="collapsed")
+                # Glow indicator if this product has a previous price on file
+                if prods and prev_cost > 0:
+                    st.markdown(
+                        "<div class='po-glow-pill'>💰 له سعر سابق</div>",
+                        unsafe_allow_html=True)
+                # Per-row line total (quantity × new price), shown as it's entered
                 if qty > 0 and prods:
+                    line_total = qty * new_price
+                    st.markdown(
+                        f"<div style='display:flex;justify-content:space-between;font-size:11px;"
+                        f"padding:2px 6px 8px;opacity:.8'>"
+                        f"<span style='color:#9BA58F'>{prods[pidx]['name'][:26]}</span>"
+                        f"<span style='color:#D4A853;font-weight:700'>{qty:g} × {new_price:,.2f} = {line_total:,.0f}</span>"
+                        f"</div>", unsafe_allow_html=True)
                     po_lines.append({"pid": prods[pidx]["id"], "name": prods[pidx]["name"],
                                      "qty": qty, "price": new_price, "prev": prev_cost})
 
