@@ -108,29 +108,28 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
-  /* Previous-price cell — soft inline herbal-green glow when a price is on file */
-  .po-prev-glow {
-    background:rgba(127,176,105,.08); border:1px solid rgba(127,176,105,.30);
+  /* Previous price shown under the product selector — soft glowing line */
+  .po-prev-under {
+    font-size:11px; color:#9BA58F; padding:3px 10px; margin:2px 4px 6px;
+    display:inline-block; border-radius:8px;
+    background:rgba(127,176,105,.07); border:1px solid rgba(127,176,105,.25);
     animation:poGlow 2.4s ease-in-out infinite; }
   @keyframes poGlow {
-    0%,100% { box-shadow:0 0 2px rgba(127,176,105,.20); border-color:rgba(127,176,105,.25); }
-    50%     { box-shadow:0 0 10px rgba(127,176,105,.55); border-color:rgba(127,176,105,.65); } }
-  /* PO/product rows: keep horizontal, respect 2.2:0.9:1:1.1:1.1 ratio
-     (product · qty · previous · new · total). */
+    0%,100% { box-shadow:0 0 2px rgba(127,176,105,.18); border-color:rgba(127,176,105,.22); }
+    50%     { box-shadow:0 0 9px rgba(127,176,105,.50); border-color:rgba(127,176,105,.60); } }
+  /* PO/product rows: keep horizontal, respect 2.6:1:1.1:1.1 ratio
+     (product · qty · new price · total). Previous price sits under the row. */
   div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1),
   div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1) {
-    flex:2.2 1 0 !important; }
+    flex:2.6 1 0 !important; }
   div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2),
   div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {
-    flex:0.9 1 0 !important; }
+    flex:1 1 0 !important; }
   div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3),
   div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3) {
-    flex:1 1 0 !important; }
+    flex:1.1 1 0 !important; }
   div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(4),
   div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(4) {
-    flex:1.1 1 0 !important; }
-  div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(5),
-  div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(5) {
     flex:1.1 1 0 !important; }
   /* Float the send button INSIDE the chat text box (bottom-left for RTL). */
   div[class*="st-key-floatsend"] { position:relative; }
@@ -1020,37 +1019,36 @@ def procurement_screen():
             ss.setdefault("po_rows", {})
 
             st.markdown("<div style='font-size:12px;opacity:.7;margin-top:8px'>المنتجات</div>", unsafe_allow_html=True)
-            # Column headers (Product · Quantity · Previous · New · Total)
+            # Column headers (Product · Quantity · New price · Total)
             with st.container(key="btnrow_pohdr"):
-                hh1, hh2, hh3, hh4, hh5 = st.columns([2.2, 0.9, 1, 1.1, 1.1])
+                hh1, hh2, hh4, hh5 = st.columns([2.6, 1, 1.1, 1.1])
                 hh1.markdown("<div style='font-size:9px;opacity:.55;text-align:center'>المنتج</div>", unsafe_allow_html=True)
                 hh2.markdown("<div style='font-size:9px;opacity:.55;text-align:center'>الكمية</div>", unsafe_allow_html=True)
-                hh3.markdown("<div style='font-size:9px;opacity:.55;text-align:center'>السابق</div>", unsafe_allow_html=True)
-                hh4.markdown("<div style='font-size:9px;opacity:.55;text-align:center'>الجديد</div>", unsafe_allow_html=True)
+                hh4.markdown("<div style='font-size:9px;opacity:.55;text-align:center'>السعر الجديد</div>", unsafe_allow_html=True)
                 hh5.markdown("<div style='font-size:9px;opacity:.55;text-align:center'>الإجمالي</div>", unsafe_allow_html=True)
             po_lines = []
             for r in range(ss.po_rowcount):
                 with st.container(key=f"btnrow_porow_{r}"):
-                    rc1, rc2, rc3, rc4, rc5 = st.columns([2.2, 0.9, 1, 1.1, 1.1])
+                    rc1, rc2, rc4, rc5 = st.columns([2.6, 1, 1.1, 1.1])
                     pidx = rc1.selectbox("منتج", range(len(pnames)),
                         format_func=lambda i: pnames[i], key=f"po_prod_{r}", label_visibility="collapsed")
                     qty = rc2.number_input("كمية", min_value=0.0, value=0.0, step=1.0,
                         key=f"po_qty_{r}", label_visibility="collapsed")
-                    # Previous price — glows softly (inline, near) when on file
                     prev_cost = float(prods[pidx]["cost"]) if prods else 0.0
-                    prev_cls = "po-prev-glow" if prev_cost > 0 else ""
-                    rc3.markdown(
-                        f"<div class='{prev_cls}' style='padding:7px 4px;text-align:center;"
-                        f"font-size:12px;color:#7FB069;border-radius:8px'>{prev_cost:,.2f}</div>",
-                        unsafe_allow_html=True)
                     # New price — editable, defaults to previous
                     new_price = rc4.number_input("سعر جديد", min_value=0.0, value=prev_cost, step=0.5,
                         key=f"po_price_{r}", label_visibility="collapsed")
-                    # Total — quantity × new price, shown live
+                    # Total — quantity × new price, live
                     line_total = qty * new_price
                     rc5.markdown(
                         f"<div style='padding:7px 4px;text-align:center;font-size:12px;"
                         f"font-weight:700;color:#D4A853'>{line_total:,.0f}</div>",
+                        unsafe_allow_html=True)
+                # Previous price shown UNDER the product selector — glows softly if on file
+                if prods and prev_cost > 0:
+                    st.markdown(
+                        f"<div class='po-prev-under'>السعر السابق: "
+                        f"<b style='color:#7FB069'>{prev_cost:,.2f}</b> د.ل</div>",
                         unsafe_allow_html=True)
                 if qty > 0 and prods:
                     po_lines.append({"pid": prods[pidx]["id"], "name": prods[pidx]["name"],
