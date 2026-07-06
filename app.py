@@ -232,6 +232,7 @@ ss.setdefault("lang", "ar")
 ss.setdefault("screen", "home")
 ss.setdefault("mo_open", None)
 ss.setdefault("op_pick_open", None)
+ss.setdefault("op_pick_mode", None)
 ss.setdefault("po_open", None)
 ss.setdefault("so_open", None)
 ss.setdefault("chat_open", None)
@@ -1232,7 +1233,7 @@ def operations_screen():
 
     # Sub-page: picking detail with validate
     if ss.get("op_pick_open"):
-        _op_picking_detail(uid, pwd, ss.op_pick_open)
+        _op_picking_detail(uid, pwd, ss.op_pick_open, mode=ss.get("op_pick_mode", "delivery"))
         return
 
     tab1, tab2, tab3 = st.tabs(["📤 FG ← يمامة", "🚚 يمامة ← العميل", "📥 استلام من SJ"])
@@ -1263,7 +1264,7 @@ def operations_screen():
             )
             st.markdown(card, unsafe_allow_html=True)
             if st.button("عرض وتأكيد ←", key=f"op1_{p['id']}", use_container_width=True):
-                ss.op_pick_open = p["id"]; st.rerun()
+                ss.op_pick_open = p["id"]; ss.op_pick_mode = "delivery"; st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         if p_total > p_shown:
             if st.button(f"⬇️ تحميل المزيد ({p_total - p_shown} متبقٍ)", key="op1_more", use_container_width=True):
@@ -1329,7 +1330,7 @@ def operations_screen():
             )
             st.markdown(card, unsafe_allow_html=True)
             if st.button("عرض واستلام ←", key=f"op3_{tr['id']}", use_container_width=True):
-                ss.op_pick_open = tr["id"]; st.rerun()
+                ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"; st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         if t_total > t_shown:
             if st.button(f"⬇️ تحميل المزيد ({t_total - t_shown} متبقٍ)", key="op3_more", use_container_width=True):
@@ -1793,29 +1794,46 @@ def _so_detail(uid, pwd, so_id):
         st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span>{l['name']} <span style='opacity:.5;font-size:11px'>×{l['qty']:g}</span></span><span style='color:#D4A853'>{l['subtotal']:,.0f}</span></div>", unsafe_allow_html=True)
 
 
-def _op_picking_detail(uid, pwd, picking_id):
+def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
+    """Picking detail. mode='delivery' (Yamamah handoff — shows customer
+    contact) or mode='receive' (internal SJ→HD transfer — no contact,
+    receive action)."""
     if st.button("← رجوع"):
-        ss.op_pick_open = None; st.rerun()
+        ss.op_pick_open = None; ss.op_pick_mode = None; st.rerun()
     d = oc.get_picking_detail(uid, pwd, picking_id)
     if not d:
         st.error("غير موجود"); return
-    st.markdown(f"""<div class='greeting'>
-        <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['order']} · {d['name']}</div>
-        <div style='font-size:18px;font-weight:700'>{d['customer']}</div>
-        <div style='font-size:12px;opacity:.75;margin-top:4px'>📞 {d['phone']}<br>📍 {d['address']}</div>
-    </div>""", unsafe_allow_html=True)
+
+    if mode == "receive":
+        # Internal transfer — no customer/contact; show route context instead
+        st.markdown(f"""<div class='greeting'>
+            <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['name']}</div>
+            <div style='font-size:15px;font-weight:700;margin-top:4px'>تحويل داخلي</div>
+            <div style='font-size:12px;opacity:.75;margin-top:4px'>من سراج (SJ) إلى حي دمشق (HD)</div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        # Yamamah delivery — customer contact is relevant
+        st.markdown(f"""<div class='greeting'>
+            <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['order']} · {d['name']}</div>
+            <div style='font-size:18px;font-weight:700'>{d['customer']}</div>
+            <div style='font-size:12px;opacity:.75;margin-top:4px'>📞 {d['phone']}<br>📍 {d['address']}</div>
+        </div>""", unsafe_allow_html=True)
+
     st.markdown("**المنتجات**")
     for l in d["lines"]:
         st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span>{l['name']}</span><span style='opacity:.8'>{l['done']:g}/{l['qty']:g}</span></div>", unsafe_allow_html=True)
+
     if d["state"] not in ("done", "cancel"):
-        if st.button("✅ تأكيد التسليم ليمامة", type="primary", use_container_width=True):
+        btn_label = "📥 تأكيد الاستلام في حي دمشق" if mode == "receive" else "✅ تأكيد التسليم ليمامة"
+        if st.button(btn_label, type="primary", use_container_width=True):
             ok, msg = oc.validate_picking(uid, pwd, picking_id)
             if ok:
-                st.success(msg); ss.op_pick_open = None; st.rerun()
+                st.success(msg); ss.op_pick_open = None; ss.op_pick_mode = None; st.rerun()
             else:
                 st.error(msg)
     else:
-        st.info("تم تأكيد هذا الطلب مسبقاً")
+        done_msg = "تم استلام هذا التحويل" if mode == "receive" else "تم تأكيد هذا الطلب مسبقاً"
+        st.info(done_msg)
 
 
 def _operations_screen_old():
