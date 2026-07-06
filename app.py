@@ -108,6 +108,20 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
+  /* Pending-action glow: soft herbal-green pulse on buttons that represent
+     work waiting to be received/handled (purchase receipt, transfer receipt).
+     Calm 2.4s cycle — signals 'something is waiting', not urgency. */
+  div[class*="st-key-glowbtn"] .stButton>button {
+    border:1px solid rgba(127,176,105,.45) !important;
+    animation:pendGlow 2.4s ease-in-out infinite; }
+  @keyframes pendGlow {
+    0%,100% { box-shadow:0 0 3px rgba(127,176,105,.25); }
+    50%     { box-shadow:0 0 15px rgba(127,176,105,.60); } }
+  /* Urgent/overdue task: glow the ⋯ popover trigger. */
+  div[class*="st-key-glowbtn_task"] [data-testid="stPopover"] button {
+    border:1px solid rgba(127,176,105,.45) !important;
+    border-radius:8px;
+    animation:pendGlow 2.4s ease-in-out infinite; }
   /* Previous price shown under the product selector — soft glowing line */
   .po-prev-under {
     font-size:11px; color:#9BA58F; padding:3px 10px; margin:2px 4px 6px;
@@ -659,18 +673,23 @@ def tasks_screen():
                 due_txt = f"<span style='color:{'#A32D2D' if overdue else '#888'}'>{task['due']}</span>" if task["due"] else ""
                 st.markdown(f"{emoji} **{task['name']}**  \n<span class='badge' style='background:#E6F1FB;color:#1A5276'>{task['stage']}</span> · {task['project']} · {due_txt}", unsafe_allow_html=True)
             with c2:
-                with st.popover("⋯"):
-                    stages = oc.get_project_stages(uid, pwd, task["id"])
-                    st.caption(t("stage"))
-                    if not stages:
-                        st.caption("لا مراحل (مهمة بدون مشروع)")
-                    for sid, sname in stages:
-                        if st.button(sname, key=f"st_{task['id']}_{sid}", use_container_width=True):
-                            oc.set_task_stage(uid, pwd, task["id"], sid); st.rerun()
-                    note = st.text_input(t("log_note"), key=f"note_{task['id']}")
-                    if st.button(t("post"), key=f"post_{task['id']}"):
-                        if note.strip():
-                            oc.post_task_note(uid, pwd, task["id"], note); st.success("✓"); st.rerun()
+                # Glow the action affordance only when the task needs attention
+                # (overdue, or high-priority and not done) — keeps calm tasks calm.
+                needs_attention = overdue or (task["priority"] == "1" and not done)
+                _pop_ctx = st.container(key=f"glowbtn_task_{task['id']}") if needs_attention else st.container()
+                with _pop_ctx:
+                    with st.popover("⋯"):
+                        stages = oc.get_project_stages(uid, pwd, task["id"])
+                        st.caption(t("stage"))
+                        if not stages:
+                            st.caption("لا مراحل (مهمة بدون مشروع)")
+                        for sid, sname in stages:
+                            if st.button(sname, key=f"st_{task['id']}_{sid}", use_container_width=True):
+                                oc.set_task_stage(uid, pwd, task["id"], sid); st.rerun()
+                        note = st.text_input(t("log_note"), key=f"note_{task['id']}")
+                        if st.button(t("post"), key=f"post_{task['id']}"):
+                            if note.strip():
+                                oc.post_task_note(uid, pwd, task["id"], note); st.success("✓"); st.rerun()
 
 # ── PRODUCTION ───────────────────────────────────────────────
 # ── MO MANAGEMENT PAGE ───────────────────────────────────────
@@ -949,10 +968,11 @@ def production_screen():
                 "</div>"
             )
             st.markdown(card, unsafe_allow_html=True)
-            if st.button("📥 استلام كامل", key=f"rcv_{r['id']}", use_container_width=True):
-                ok, msg = oc.validate_picking(uid, pwd, r["id"])
-                _flash(ok, msg)
-                if ok: st.rerun()
+            with st.container(key=f"glowbtn_rcv_{r['id']}"):
+                if st.button("📥 استلام كامل", key=f"rcv_{r['id']}", use_container_width=True):
+                    ok, msg = oc.validate_picking(uid, pwd, r["id"])
+                    _flash(ok, msg)
+                    if ok: st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
         st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
@@ -1310,10 +1330,11 @@ def _receiving_tab(uid, pwd):
             "</div>"
         )
         st.markdown(card, unsafe_allow_html=True)
-        if st.button("📥 استلام كامل", key=f"prcv_{r['id']}", use_container_width=True):
-            ok, msg = oc.validate_picking(uid, pwd, r["id"])
-            _flash(ok, msg)
-            if ok: st.rerun()
+        with st.container(key=f"glowbtn_prcv_{r['id']}"):
+            if st.button("📥 استلام كامل", key=f"prcv_{r['id']}", use_container_width=True):
+                ok, msg = oc.validate_picking(uid, pwd, r["id"])
+                _flash(ok, msg)
+                if ok: st.rerun()
         st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
     st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
@@ -1452,8 +1473,9 @@ def operations_screen():
                 "</div>"
             )
             st.markdown(card, unsafe_allow_html=True)
-            if st.button("عرض واستلام ←", key=f"op3_{tr['id']}", use_container_width=True):
-                ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"; st.rerun()
+            with st.container(key=f"glowbtn_op3_{tr['id']}"):
+                if st.button("عرض واستلام ←", key=f"op3_{tr['id']}", use_container_width=True):
+                    ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"; st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         if t_total > t_shown:
             if st.button(f"⬇️ تحميل المزيد ({t_total - t_shown} متبقٍ)", key="op3_more", use_container_width=True):
