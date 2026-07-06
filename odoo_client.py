@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 21
+CLIENT_VERSION = 22
 import xmlrpc.client
 import threading
 from datetime import date
@@ -493,7 +493,7 @@ def get_mo_detail(uid, pwd, mo_id):
 TRANSFER_ROUTES = {
     "putaway_rm":  {"label": "استلام → مخزن المواد الخام", "type_id": 51, "src": 36, "dest": 37},
     "putaway_pkg": {"label": "استلام → مخزن التغليف",      "type_id": 66, "src": 36, "dest": 38},
-    "fg_to_hd":    {"label": "منتج نهائي: من سراج إلى حي دمشق", "type_id": 57, "src": 55, "dest": 45},
+    "fg_to_hd":    {"label": "منتج نهائي: من سراج إلى حي دمشق", "type_id": 57, "src": 55, "dest": 45, "two_step": True},
 }
 
 
@@ -658,9 +658,13 @@ def get_products_at_location(uid, pwd, loc_id, categ_id=None):
 
 
 def create_transfer(uid, pwd, route_key, product_id, qty):
-    """Create + validate an internal transfer on a preset route.
+    """Create an internal transfer on a preset route.
+    For routes marked two_step=True, the transfer is created and confirmed
+    but NOT validated — it waits for the destination site to receive it
+    (a real handoff). Otherwise it auto-completes on creation.
     Returns (ok, message)."""
     r = TRANSFER_ROUTES[route_key]
+    two_step = r.get("two_step", False)
     try:
         pick_id = odoo(uid, pwd, "stock.picking", "create", [{
             "picking_type_id": r["type_id"],
@@ -680,10 +684,21 @@ def create_transfer(uid, pwd, route_key, product_id, qty):
         except Exception as e:
             if "cannot marshal None" not in str(e):
                 raise
+        # Reserve stock so the transfer is ready to be received
+        try:
+            odoo(uid, pwd, "stock.picking", "action_assign", [[pick_id]])
+        except Exception as e:
+            if "cannot marshal None" not in str(e):
+                raise
+        name = odoo(uid, pwd, "stock.picking", "read", [[pick_id]], {"fields": ["name"]})
+        pname = name[0]["name"] if name else ""
+        if two_step:
+            # Stop here — destination site receives it in the Operations tab
+            return True, f"تم إنشاء التحويل ✓ ({pname}) — بانتظار الاستلام في حي دمشق"
+        # One-step routes: validate immediately
         ok, msg = validate_picking(uid, pwd, pick_id)
         if ok:
-            name = odoo(uid, pwd, "stock.picking", "read", [[pick_id]], {"fields": ["name"]})
-            return True, f"تم التحويل ✓ ({name[0]['name']})"
+            return True, f"تم التحويل ✓ ({pname})"
         return ok, msg
     except Exception as e:
         return False, _clean_odoo_error(e)

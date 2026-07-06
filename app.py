@@ -218,7 +218,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 21
+APP_EXPECTS_CLIENT = 22
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
