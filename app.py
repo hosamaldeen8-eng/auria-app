@@ -815,7 +815,12 @@ def production_screen():
     if not hasattr(oc, "get_manufacturable_products"):
         st.error("⚠️ App updating — please reboot from 'Manage app' → Reboot, or wait a moment and refresh.")
         st.stop()
-    tab1, tab2, tab3, tab4 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}", "🔄 تحويلات"])
+    # Live pending-receipt count drives the transfers tab label + glow
+    _prod_pending = oc.get_pending_receipts(uid, pwd)
+    _tr_label = f"🔄 تحويلات ({len(_prod_pending)})" if _prod_pending else "🔄 تحويلات"
+    if _prod_pending:
+        _glow_tab_with_count()
+    tab1, tab2, tab3, tab4 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}", _tr_label])
 
     # ── Tab 1: MOs + create from BOM dropdown ──
     with tab1:
@@ -942,7 +947,7 @@ def production_screen():
     # ── Tab 4: Transfers ──
     with tab4:
         st.markdown("**📥 استلام المشتريات** <span style='opacity:.5;font-size:11px'>(مورد ← الاستلام)</span>", unsafe_allow_html=True)
-        receipts = oc.get_pending_receipts(uid, pwd)
+        receipts = _prod_pending
         if not receipts:
             st.caption("لا توجد استلامات معلقة")
         for r in receipts:
