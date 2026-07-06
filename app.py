@@ -157,6 +157,60 @@ st.markdown("""
 # processing (page moves, button clicks) via the :has() selector above.
 st.markdown(f"<div class='auria-loader'><img src='data:image/png;base64,{EMBLEM_SM}'/></div>", unsafe_allow_html=True)
 
+# ── Floating "scroll to top" button ──────────────────────────
+# Injected into the parent document (the button lives outside this iframe so
+# it floats over the whole app). Appears after scrolling down; jumps to top.
+components.html("""
+<script>
+(function(){
+  const doc = window.parent.document;
+  if (doc.getElementById('auria-top-btn')) return;  // inject once
+
+  // Find the real scroll container Streamlit uses
+  function scroller(){
+    return doc.querySelector('section.main')
+        || doc.querySelector('.stMain')
+        || doc.querySelector('[data-testid="stAppViewContainer"] .main')
+        || doc.scrollingElement || doc.documentElement;
+  }
+
+  const btn = doc.createElement('button');
+  btn.id = 'auria-top-btn';
+  btn.innerHTML = '↑';
+  btn.setAttribute('aria-label','إلى الأعلى');
+  Object.assign(btn.style, {
+    position:'fixed', bottom:'84px', left:'16px', zIndex:'100000',
+    width:'46px', height:'46px', borderRadius:'50%',
+    background:'#7FB069', color:'#141B14', border:'none',
+    fontSize:'22px', fontWeight:'700', cursor:'pointer',
+    boxShadow:'0 3px 14px rgba(127,176,105,.45)',
+    display:'none', alignItems:'center', justifyContent:'center',
+    opacity:'0', transition:'opacity .2s, transform .15s'
+  });
+  btn.onmouseenter = ()=>{ btn.style.transform='scale(1.08)'; };
+  btn.onmouseleave = ()=>{ btn.style.transform='scale(1)'; };
+  btn.onclick = ()=>{
+    const s = scroller();
+    s.scrollTo({top:0, behavior:'smooth'});
+    doc.defaultView.scrollTo({top:0, behavior:'smooth'});
+  };
+  doc.body.appendChild(btn);
+
+  function onScroll(){
+    const s = scroller();
+    const y = s.scrollTop || doc.defaultView.scrollY || 0;
+    if (y > 400){ btn.style.display='flex'; requestAnimationFrame(()=>btn.style.opacity='1'); }
+    else { btn.style.opacity='0'; setTimeout(()=>{ if(btn.style.opacity==='0') btn.style.display='none'; },200); }
+  }
+  // Attach to whichever element actually scrolls
+  const s = scroller();
+  s.addEventListener('scroll', onScroll, {passive:true});
+  doc.defaultView.addEventListener('scroll', onScroll, {passive:true});
+  setInterval(onScroll, 800);  // safety poll in case the scroller swaps on rerun
+})();
+</script>
+""", height=0)
+
 # ── SESSION ──────────────────────────────────────────────────
 ss = st.session_state
 
