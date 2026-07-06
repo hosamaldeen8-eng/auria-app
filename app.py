@@ -218,7 +218,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 22
+APP_EXPECTS_CLIENT = 23
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -271,6 +271,10 @@ def _cached_canned(uid, pwd):
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_ship_statuses(uid, pwd):
     return oc.get_shipment_statuses(uid, pwd)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_ship_api_statuses(uid, pwd):
+    return oc.get_shipment_api_statuses(uid, pwd)
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_zones(uid, pwd, query):
@@ -1275,9 +1279,13 @@ def operations_screen():
     # ── Stage 2: Yamamah → Customer (live API status) ──
     with tab2:
         st.caption("الشحنات لدى يمامة — حالة API المباشرة، الأقدم أولاً")
-        S2 = {"all": "الكل", "sent": "🚚 قيد التوصيل", "delivered": "✅ تم التسليم", "returned": "↩️ مرتجع"}
+        # Granular live API status list (swapped from Sales)
+        api_statuses = _cached_ship_api_statuses(uid, pwd)
+        s2_opts = ["all"] + api_statuses + ["none"]
         f2c1, f2c2 = st.columns([2, 3])
-        s2 = f2c1.selectbox("الحالة", list(S2.keys()), format_func=lambda k: S2[k], key="op_s2_f")
+        s2 = f2c1.selectbox("الحالة", s2_opts,
+            format_func=lambda k: "كل الشحنات" if k == "all" else ("بدون حالة" if k == "none" else k),
+            key="op_s2_f")
         q2 = f2c2.text_input(t("search"), key="op_s2_q", placeholder="طلب أو اسم العميل")
         sig2 = f"{s2}|{q2}"
         if ss.get("op2_sig") != sig2:
@@ -1357,11 +1365,11 @@ def sales_screen():
                                "all": "الكل", "cancel": "ملغي"}[k], key="so_state_f")
     so_q = f2.text_input(t("search"), key="so_q", placeholder="رقم أو عميل")
 
-    # Shipment-status filter (live courier status from the Accurate/Yamamah API)
-    statuses = _cached_ship_statuses(uid, pwd)
-    ship_opts = ["all"] + statuses + ["none"]
+    # Shipment-status filter — short, clean groupings (swapped from Ops)
+    ship_opts = ["all"] + list(oc.SHORT_SHIP_STATUS.keys()) + ["none"]
     so_ship = st.selectbox("حالة الشحنة", ship_opts,
-        format_func=lambda k: "كل الشحنات" if k == "all" else ("بدون شحنة" if k == "none" else k),
+        format_func=lambda k: "كل الشحنات" if k == "all" else (
+            "بدون شحنة" if k == "none" else oc.SHORT_SHIP_STATUS[k]["label"]),
         key="so_ship_f")
 
     # Reset the load-more limit when the filter/search changes

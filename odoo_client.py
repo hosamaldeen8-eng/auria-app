@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 22
+CLIENT_VERSION = 23
 import xmlrpc.client
 import threading
 from datetime import date
@@ -492,6 +492,16 @@ def get_mo_detail(uid, pwd, mo_id):
 #   51 RM Storage:     SJ/RM-Receiving(36) → SJ/RM-Storage(37)
 #   66 PKG Storage:    SJ/RM-Receiving(36) → SJ/PKG-Storage(38)
 #   57 FG SJ→HD:       SJ/FG-Storage(55)   → HD/FG-Storage(45)
+# Short, clean shipment-status groupings (for the Sales screen). Each maps a
+# friendly label to the granular Yamamah api_status_name values it covers.
+SHORT_SHIP_STATUS = {
+    "in_transit": {"label": "🚚 قيد التوصيل",
+                   "names": ["قيد التوصيل", "طلب شحن", "تم الاستلام بالمخزن", "انتظار لاعادة التوصيل"]},
+    "delivered":  {"label": "✅ تم التسليم", "names": ["تم التسليم"]},
+    "returned":   {"label": "↩️ مرتجع",
+                   "names": ["Returned", "ارتجاع للراسل", "تعذر التسليم", "Cancelled"]},
+}
+
 TRANSFER_ROUTES = {
     "putaway_rm":  {"label": "استلام → مخزن المواد الخام", "type_id": 51, "src": 36, "dest": 37},
     "putaway_pkg": {"label": "استلام → مخزن التغليف",      "type_id": 66, "src": 36, "dest": 38},
@@ -1190,12 +1200,15 @@ def get_picking_detail(uid, pwd, picking_id):
     }
 
 
-def get_yamamah_to_customer(uid, pwd, state="all", query="", limit=200):
+def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200):
     """Stage 2: shipments handed to Yamamah, tracked via Accurate API.
-    Oldest first, shows live API status."""
+    Oldest first. Filters by the granular live API status (api_status_name)."""
     domain = []
-    if state != "all":
-        domain.append(["state", "=", state])
+    if api_status and api_status != "all":
+        if api_status == "none":
+            domain.append(["api_status_name", "=", False])
+        else:
+            domain.append(["api_status_name", "=", api_status])
     if query:
         domain += ["|", "|", ["name", "ilike", query],
                    ["recipient_name", "ilike", query], ["sale_id.name", "ilike", query]]
@@ -1280,6 +1293,19 @@ def _diagnose_accurate_error(msg):
             "generic")
 
 
+def get_shipment_api_statuses(uid, pwd):
+    """Distinct granular API statuses on shipments (for the Ops filter)."""
+    sh = odoo(uid, pwd, "accurate.shipment", "search_read",
+        [[["api_status_name", "!=", False]]],
+        {"fields": ["api_status_name"], "limit": 2000})
+    seen = {}
+    for s in sh:
+        name = s.get("api_status_name")
+        if name:
+            seen[name] = seen.get(name, 0) + 1
+    return [name for name, _ in sorted(seen.items(), key=lambda x: -x[1])]
+
+
 def get_shipment_statuses(uid, pwd):
     """Distinct shipment statuses currently in use (from the API), for the
     sales-order filter dropdown."""
@@ -1302,6 +1328,10 @@ def get_sales_orders(uid, pwd, state="sale", query="", ship_status="all", limit=
     if ship_status and ship_status != "all":
         if ship_status == "none":
             domain.append(["accurate_status_name", "=", False])
+        elif ship_status in SHORT_SHIP_STATUS:
+            # Short clean status → the set of granular API statuses it covers
+            names = SHORT_SHIP_STATUS[ship_status]["names"]
+            domain.append(["accurate_status_name", "in", names])
         else:
             domain.append(["accurate_status_name", "=", ship_status])
     if query:
