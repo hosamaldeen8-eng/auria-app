@@ -1271,8 +1271,9 @@ def get_so_detail(uid, pwd, so_id):
     if s.get("accurate_shipment_ids"):
         sh = odoo(uid, pwd, "accurate.shipment", "read", [s["accurate_shipment_ids"]],
             {"fields": ["name", "code", "state", "api_status_name", "error_message",
-                        "tracking_url", "recipient_mobile", "recipient_zone_id",
-                        "recipient_subzone_id"]})
+                        "tracking_url", "recipient_mobile", "recipient_phone",
+                        "recipient_name", "recipient_address",
+                        "recipient_zone_id", "recipient_subzone_id"]})
         if sh:
             latest = sh[-1]
             stage, label, color = _shipment_stage(latest["state"], latest.get("api_status_name"))
@@ -1286,6 +1287,12 @@ def get_so_detail(uid, pwd, so_id):
                 "state": latest["state"], "stage": stage, "label": label, "color": color,
                 "tracking_url": latest.get("tracking_url", ""),
                 "mobile": latest.get("recipient_mobile", ""),
+                "phone": latest.get("recipient_phone", ""),
+                "recipient": latest.get("recipient_name", ""),
+                "address": latest.get("recipient_address", ""),
+                "zone": latest["recipient_zone_id"][1] if latest.get("recipient_zone_id") else "",
+                "subzone": latest["recipient_subzone_id"][1] if latest.get("recipient_subzone_id") else "",
+                "api_status": latest.get("api_status_name", ""),
                 "guidance": guidance,
             }
     return {

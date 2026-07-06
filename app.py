@@ -1493,6 +1493,74 @@ def _create_so_form(uid, pwd):
                 st.error(res)
 
 
+def _tracking_with_copy(code, url):
+    """Tracking row with a working copy-link button (browser clipboard)."""
+    import html as _html
+    safe_url = _html.escape(url, quote=True)
+    safe_code = _html.escape(code or "")
+    html = f"""
+    <div dir="rtl" style="display:flex;align-items:center;gap:8px;font-family:-apple-system,sans-serif;
+         background:rgba(127,176,105,.08);border:1px solid rgba(127,176,105,.25);
+         border-radius:10px;padding:8px 12px;margin:2px 0">
+      <a href="{safe_url}" target="_blank" style="color:#7FB069;text-decoration:none;font-size:13px;font-weight:600">
+        🔗 تتبّع {safe_code}</a>
+      <button id="copybtn" onclick="
+          navigator.clipboard.writeText('{safe_url}').then(()=>{{
+            var b=document.getElementById('copybtn');
+            b.innerText='✓ تم النسخ'; b.style.background='#7FB069'; b.style.color='#141B14';
+            setTimeout(()=>{{b.innerText='📋 نسخ الرابط';b.style.background='#1A231A';b.style.color='#9BA58F';}},1500);
+          }});"
+        style="margin-inline-start:auto;background:#1A231A;color:#9BA58F;border:1px solid #2A3A2A;
+               border-radius:8px;padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit">
+        📋 نسخ الرابط</button>
+    </div>"""
+    components.html(html, height=54)
+
+
+def _shipment_contact_panel(sh):
+    """Expandable panel: recipient contact + delivery info for CS checks."""
+    with st.expander("📇 معلومات التوصيل والتواصل"):
+        rows = [
+            ("👤 المستلم", sh.get("recipient", "—")),
+            ("📱 الجوال", sh.get("mobile", "—")),
+            ("☎️ الهاتف", sh.get("phone", "—")),
+            ("📍 المنطقة", sh.get("zone", "—")),
+            ("🏘️ المنطقة الفرعية", sh.get("subzone", "—")),
+            ("🏠 العنوان", sh.get("address", "—")),
+            ("📦 حالة يمامة", sh.get("api_status", "—")),
+        ]
+        for label, val in rows:
+            st.markdown(
+                f"<div style='display:flex;justify-content:space-between;padding:5px 2px;"
+                f"border-bottom:1px solid #1E281E'><span style='color:#9BA58F;font-size:12px'>{label}</span>"
+                f"<span style='color:#E8E4D6;font-size:13px;font-weight:500'>{val or '—'}</span></div>",
+                unsafe_allow_html=True)
+        # Quick actions: call / copy phone
+        mobile = sh.get("mobile") or sh.get("phone") or ""
+        if mobile:
+            digits = "".join(ch for ch in mobile if ch.isdigit() or ch == "+")
+            _contact_actions(digits)
+
+
+def _contact_actions(number):
+    """Call + copy-number buttons that actually work via the browser."""
+    import html as _html
+    n = _html.escape(number, quote=True)
+    html = f"""
+    <div dir="rtl" style="display:flex;gap:8px;margin-top:8px;font-family:-apple-system,sans-serif">
+      <a href="tel:{n}" style="flex:1;text-align:center;background:rgba(127,176,105,.16);
+         color:#7FB069;border:1px solid rgba(127,176,105,.4);border-radius:10px;
+         padding:9px;font-size:13px;font-weight:600;text-decoration:none">📞 اتصال</a>
+      <a href="https://wa.me/{n.lstrip('+')}" target="_blank" style="flex:1;text-align:center;
+         background:rgba(37,211,102,.14);color:#25D366;border:1px solid rgba(37,211,102,.4);
+         border-radius:10px;padding:9px;font-size:13px;font-weight:600;text-decoration:none">💬 واتساب</a>
+      <button onclick="navigator.clipboard.writeText('{n}').then(()=>{{this.innerText='✓';setTimeout(()=>this.innerText='📋',1200);}})"
+        style="background:#1A231A;color:#9BA58F;border:1px solid #2A3A2A;border-radius:10px;
+               padding:9px 14px;font-size:13px;cursor:pointer">📋</button>
+    </div>"""
+    components.html(html, height=52)
+
+
 def _so_detail(uid, pwd, so_id):
     if st.button("← طلبات البيع"):
         ss.so_open = None; st.rerun()
@@ -1559,8 +1627,14 @@ def _so_detail(uid, pwd, so_id):
         else:
             st.caption("أكّد الطلب أولاً لإنشاء الشحنة")
     elif sh["stage"] == "ok":
-        track = f"<a href='{sh['tracking_url']}' target='_blank' style='color:#7FB069'>🔗 تتبّع {sh['code']}</a>" if sh["tracking_url"] else ""
-        st.markdown(f"<div class='task-row'><div style='color:#7FB069;font-weight:700'>✅ {sh['label']}</div><div style='margin-top:6px'>{track}</div></div>", unsafe_allow_html=True)
+        # Tracking with a copy-link button (uses an isolated HTML block so the
+        # copy actually works via the browser clipboard API).
+        st.markdown(
+            f"<div class='task-row'><div style='color:#7FB069;font-weight:700'>✅ {sh['label']}</div></div>",
+            unsafe_allow_html=True)
+        if sh["tracking_url"]:
+            _tracking_with_copy(sh["code"], sh["tracking_url"])
+        _shipment_contact_panel(sh)
     elif sh["stage"] == "error" and sh["guidance"]:
         g = sh["guidance"]
         steps_html = "".join(f"<div style='font-size:12px;margin:3px 0'>• {s}</div>" for s in g["steps"])
