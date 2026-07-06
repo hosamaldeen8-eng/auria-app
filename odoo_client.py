@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 17
+CLIENT_VERSION = 18
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1220,7 +1220,7 @@ def get_shipment_statuses(uid, pwd):
     return [name for name, _ in sorted(seen.items(), key=lambda x: -x[1])]
 
 
-def get_sales_orders(uid, pwd, state="sale", query="", ship_status="all"):
+def get_sales_orders(uid, pwd, state="sale", query="", ship_status="all", limit=200):
     domain = []
     if state != "all":
         domain.append(["state", "=", state])
@@ -1231,11 +1231,13 @@ def get_sales_orders(uid, pwd, state="sale", query="", ship_status="all"):
             domain.append(["accurate_status_name", "=", ship_status])
     if query:
         domain += ["|", ["name", "ilike", query], ["partner_id.name", "ilike", query]]
+    # True total for this filter (so the UI can say "showing X of Y")
+    total = odoo(uid, pwd, "sale.order", "search_count", [domain])
     sos = odoo(uid, pwd, "sale.order", "search_read", [domain],
         {"fields": ["id", "name", "partner_id", "state", "amount_total",
                     "date_order", "accurate_shipment_count", "accurate_status_name",
                     "accurate_tracking_url"],
-         "limit": 40, "order": "date_order desc"})
+         "limit": limit, "order": "date_order desc"})
     out = []
     for s in sos:
         out.append({
@@ -1247,7 +1249,13 @@ def get_sales_orders(uid, pwd, state="sale", query="", ship_status="all"):
             "ship_status": s.get("accurate_status_name") or "",
             "has_tracking": bool(s.get("accurate_tracking_url")),
         })
-    return out
+    # Attach the true total so the UI can show "showing X of Y"
+    class _OrderList(list):
+        pass
+    result = _OrderList(out)
+    result.total = total
+    result.shown = len(out)
+    return result
 
 
 def get_so_detail(uid, pwd, so_id):

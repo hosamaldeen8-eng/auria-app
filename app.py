@@ -164,7 +164,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 17
+APP_EXPECTS_CLIENT = 18
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1258,8 +1258,19 @@ def sales_screen():
         format_func=lambda k: "كل الشحنات" if k == "all" else ("بدون شحنة" if k == "none" else k),
         key="so_ship_f")
 
-    sos = oc.get_sales_orders(uid, pwd, so_state, so_q, so_ship)
-    st.caption(f"{len(sos)} طلب")
+    # Reset the load-more limit when the filter/search changes
+    filt_sig = f"{so_state}|{so_q}|{so_ship}"
+    if ss.get("so_filt_sig") != filt_sig:
+        ss.so_limit = 200
+        ss.so_filt_sig = filt_sig
+    so_limit = ss.get("so_limit", 200)
+    sos = oc.get_sales_orders(uid, pwd, so_state, so_q, so_ship, limit=so_limit)
+    total = getattr(sos, "total", len(sos))
+    shown = getattr(sos, "shown", len(sos))
+    if total > shown:
+        st.caption(f"عرض {shown} من {total} طلب")
+    else:
+        st.caption(f"{total} طلب")
 
     for s in sos:
         meta = oc.SO_STATE.get(s["state"], {"ar": s["state"], "color": "#9BA58F", "bg": "rgba(255,255,255,.07)"})
@@ -1288,6 +1299,12 @@ def sales_screen():
         if st.button("فتح الطلب ←", key=f"so_{s['id']}", use_container_width=True):
             ss.so_open = s["id"]; st.rerun()
         st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
+
+    # Load more if there are additional orders beyond what's shown
+    if total > shown:
+        if st.button(f"⬇️ تحميل المزيد ({total - shown} متبقٍ)", key="so_loadmore", use_container_width=True):
+            ss.so_limit = so_limit + 200
+            st.rerun()
 
 
 def _create_so_form(uid, pwd):
