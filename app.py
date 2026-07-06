@@ -164,7 +164,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 16
+APP_EXPECTS_CLIENT = 17
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -212,6 +212,10 @@ def _cached_services(uid, pwd):
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_canned(uid, pwd):
     return oc.get_canned_responses(uid, pwd)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_ship_statuses(uid, pwd):
+    return oc.get_shipment_statuses(uid, pwd)
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_zones(uid, pwd, query):
@@ -1246,7 +1250,15 @@ def sales_screen():
         format_func=lambda k: {"sale": "مؤكد", "draft": "مسودة", "sent": "عرض سعر",
                                "all": "الكل", "cancel": "ملغي"}[k], key="so_state_f")
     so_q = f2.text_input(t("search"), key="so_q", placeholder="رقم أو عميل")
-    sos = oc.get_sales_orders(uid, pwd, so_state, so_q)
+
+    # Shipment-status filter (live courier status from the Accurate/Yamamah API)
+    statuses = _cached_ship_statuses(uid, pwd)
+    ship_opts = ["all"] + statuses + ["none"]
+    so_ship = st.selectbox("حالة الشحنة", ship_opts,
+        format_func=lambda k: "كل الشحنات" if k == "all" else ("بدون شحنة" if k == "none" else k),
+        key="so_ship_f")
+
+    sos = oc.get_sales_orders(uid, pwd, so_state, so_q, so_ship)
     st.caption(f"{len(sos)} طلب")
 
     for s in sos:

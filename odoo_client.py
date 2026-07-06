@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 16
+CLIENT_VERSION = 17
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1205,10 +1205,30 @@ def _diagnose_accurate_error(msg):
             "generic")
 
 
-def get_sales_orders(uid, pwd, state="sale", query=""):
+def get_shipment_statuses(uid, pwd):
+    """Distinct shipment statuses currently in use (from the API), for the
+    sales-order filter dropdown."""
+    sos = odoo(uid, pwd, "sale.order", "search_read",
+        [[["accurate_status_name", "!=", False]]],
+        {"fields": ["accurate_status_name"], "limit": 1000})
+    seen = {}
+    for s in sos:
+        name = s.get("accurate_status_name")
+        if name:
+            seen[name] = seen.get(name, 0) + 1
+    # Sorted by frequency, most common first
+    return [name for name, _ in sorted(seen.items(), key=lambda x: -x[1])]
+
+
+def get_sales_orders(uid, pwd, state="sale", query="", ship_status="all"):
     domain = []
     if state != "all":
         domain.append(["state", "=", state])
+    if ship_status and ship_status != "all":
+        if ship_status == "none":
+            domain.append(["accurate_status_name", "=", False])
+        else:
+            domain.append(["accurate_status_name", "=", ship_status])
     if query:
         domain += ["|", ["name", "ilike", query], ["partner_id.name", "ilike", query]]
     sos = odoo(uid, pwd, "sale.order", "search_read", [domain],
