@@ -927,14 +927,13 @@ def production_screen():
 
         st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
         st.markdown("**🔄 تحويل داخلي**")
-        route_key = st.selectbox("المسار",
-            list(oc.TRANSFER_ROUTES.keys()),
-            format_func=lambda k: oc.TRANSFER_ROUTES[k]["label"],
-            key="tr_route")
+        st.caption("منتج نهائي: سراج (SJ) ← حي دمشق (HD)")
+        # Locked to the SJ FG → HD FG route only.
+        route_key = "fg_to_hd"
         route = oc.TRANSFER_ROUTES[route_key]
         avail = oc.get_products_at_location(uid, pwd, route["src"])
         if not avail:
-            st.info("لا يوجد مخزون في موقع المصدر")
+            st.info("لا يوجد مخزون منتج نهائي في مخزن سراج (SJ)")
         else:
             pnames = [f"{p['name']} (متاح {p['available']:g})" for p in avail]
             pi = st.selectbox("المنتج", range(len(pnames)),
