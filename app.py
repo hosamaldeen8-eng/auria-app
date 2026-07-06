@@ -218,7 +218,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 20
+APP_EXPECTS_CLIENT = 21
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -931,7 +931,7 @@ def production_screen():
         # Locked to the SJ FG → HD FG route only.
         route_key = "fg_to_hd"
         route = oc.TRANSFER_ROUTES[route_key]
-        avail = oc.get_products_at_location(uid, pwd, route["src"])
+        avail = oc.get_products_at_location(uid, pwd, route["src"], categ_id=2)  # FG only
         if not avail:
             st.info("لا يوجد مخزون منتج نهائي في مخزن سراج (SJ)")
         else:
@@ -1202,7 +1202,7 @@ def _receiving_tab(uid, pwd):
     # Locked to the SJ FG → HD FG route only in the receiving context.
     route_key = "fg_to_hd"
     route = oc.TRANSFER_ROUTES[route_key]
-    avail = oc.get_products_at_location(uid, pwd, route["src"])
+    avail = oc.get_products_at_location(uid, pwd, route["src"], categ_id=2)  # FG only
     if not avail:
         st.info("لا يوجد مخزون منتج نهائي في مخزن سراج (SJ)")
     else:

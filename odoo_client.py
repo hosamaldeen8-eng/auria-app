@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 20
+CLIENT_VERSION = 21
 import xmlrpc.client
 import threading
 from datetime import date
@@ -634,8 +634,10 @@ def validate_picking(uid, pwd, picking_id):
         return False, _clean_odoo_error(e)
 
 
-def get_products_at_location(uid, pwd, loc_id):
-    """Products with stock at a location — for the transfer picker."""
+def get_products_at_location(uid, pwd, loc_id, categ_id=None):
+    """Products with stock at a location — for the transfer picker.
+    If categ_id is given, only products in that product category (e.g.
+    Finished Goods) are returned."""
     quants = odoo(uid, pwd, "stock.quant", "search_read",
         [[["location_id", "=", loc_id], ["quantity", ">", 0]]],
         {"fields": ["product_id", "quantity"], "limit": 200})
@@ -644,6 +646,13 @@ def get_products_at_location(uid, pwd, loc_id):
     for q in quants:
         agg[q["product_id"][1]] += q["quantity"]
         pid_map[q["product_id"][1]] = q["product_id"][0]
+    # Restrict to a product category if requested (e.g. Finished Goods only)
+    if categ_id is not None and pid_map:
+        allowed = odoo(uid, pwd, "product.product", "search",
+            [[["id", "in", list(pid_map.values())], ["categ_id", "child_of", categ_id]]])
+        allowed_set = set(allowed)
+        return [{"id": pid_map[n], "name": n, "available": round(v, 2)}
+                for n, v in agg.items() if pid_map[n] in allowed_set]
     return [{"id": pid_map[n], "name": n, "available": round(v, 2)}
             for n, v in sorted(agg.items(), key=lambda x: -x[1])]
 
