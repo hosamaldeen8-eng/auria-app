@@ -1374,7 +1374,13 @@ def operations_screen():
         _op_picking_detail(uid, pwd, ss.op_pick_open, mode=ss.get("op_pick_mode", "delivery"))
         return
 
-    tab1, tab2, tab3 = st.tabs(["📤 FG ← يمامة", "🚚 يمامة ← العميل", "📥 استلام من SJ"])
+    # Live count of pending SJ→HD transfers drives the tab label + glow
+    _sj_pending = oc.get_sj_to_hd_transfers(uid, pwd, "ready", "", limit=200)
+    _n_sj = getattr(_sj_pending, "total", len(_sj_pending))
+    _sj_label = f"📥 استلام من SJ ({_n_sj})" if _n_sj else "📥 استلام من SJ"
+    if _n_sj:
+        _glow_tab_with_count()
+    tab1, tab2, tab3 = st.tabs(["📤 FG ← يمامة", "🚚 يمامة ← العميل", _sj_label])
 
     # ── Stage 1: FG → Yamamah (default ready+waiting, validate) ──
     with tab1:
