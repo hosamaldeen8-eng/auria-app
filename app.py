@@ -108,6 +108,17 @@ st.markdown("""
     min-height:0; box-shadow:none; transition:all .12s; }
   div[class*="st-key-btnrow"] .stButton>button:hover {
     background:#22301F; border-color:#7FB069; color:#E8E4D6; }
+  /* PO/product rows: keep horizontal but respect the 3:1:1.2 width ratio
+     (don't force equal columns) so the product selector stays wide. */
+  div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1),
+  div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1) {
+    flex:3 1 0 !important; }
+  div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2),
+  div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {
+    flex:1 1 0 !important; }
+  div[class*="st-key-btnrow_porow"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3),
+  div[class*="st-key-btnrow_pohdr"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3) {
+    flex:1.2 1 0 !important; }
   /* Float the send button INSIDE the chat text box (bottom-left for RTL). */
   div[class*="st-key-floatsend"] { position:relative; }
   div[class*="st-key-floatsend"] [data-testid="stTextArea"] textarea {
@@ -996,18 +1007,25 @@ def procurement_screen():
             ss.setdefault("po_rows", {})
 
             st.markdown("<div style='font-size:12px;opacity:.7;margin-top:8px'>المنتجات</div>", unsafe_allow_html=True)
+            # Column headers (Product · Quantity · Price)
+            with st.container(key="btnrow_pohdr"):
+                hh1, hh2, hh3 = st.columns([3, 1, 1.2])
+                hh1.markdown("<div style='font-size:10px;opacity:.55;text-align:center'>المنتج</div>", unsafe_allow_html=True)
+                hh2.markdown("<div style='font-size:10px;opacity:.55;text-align:center'>الكمية</div>", unsafe_allow_html=True)
+                hh3.markdown("<div style='font-size:10px;opacity:.55;text-align:center'>السعر</div>", unsafe_allow_html=True)
             po_lines = []
             for r in range(ss.po_rowcount):
-                rc1, rc2, rc3 = st.columns([3, 1, 1.2])
-                pidx = rc1.selectbox("منتج", range(len(pnames)),
-                    format_func=lambda i: pnames[i], key=f"po_prod_{r}", label_visibility="collapsed")
-                qty = rc2.number_input("كمية", min_value=0.0, value=0.0, step=1.0,
-                    key=f"po_qty_{r}", label_visibility="collapsed")
-                # Live cost display (non-editable, pulled from product) — like sales orders
-                unit_cost = float(prods[pidx]["cost"]) if prods else 0.0
-                rc3.markdown(
-                    f"<div style='padding:7px 4px;text-align:center;font-size:12px;color:#D4A853'>"
-                    f"{unit_cost:,.2f}</div>", unsafe_allow_html=True)
+                with st.container(key=f"btnrow_porow_{r}"):
+                    rc1, rc2, rc3 = st.columns([3, 1, 1.2])
+                    pidx = rc1.selectbox("منتج", range(len(pnames)),
+                        format_func=lambda i: pnames[i], key=f"po_prod_{r}", label_visibility="collapsed")
+                    qty = rc2.number_input("كمية", min_value=0.0, value=0.0, step=1.0,
+                        key=f"po_qty_{r}", label_visibility="collapsed")
+                    # Live cost display (non-editable, pulled from product) — like sales orders
+                    unit_cost = float(prods[pidx]["cost"]) if prods else 0.0
+                    rc3.markdown(
+                        f"<div style='padding:7px 4px;text-align:center;font-size:12px;color:#D4A853'>"
+                        f"{unit_cost:,.2f}</div>", unsafe_allow_html=True)
                 if qty > 0 and prods:
                     po_lines.append({"pid": prods[pidx]["id"], "name": prods[pidx]["name"],
                                      "qty": qty, "price": unit_cost})
