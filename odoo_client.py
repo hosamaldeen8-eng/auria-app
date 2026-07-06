@@ -493,7 +493,7 @@ def get_mo_detail(uid, pwd, mo_id):
 TRANSFER_ROUTES = {
     "putaway_rm":  {"label": "استلام → مخزن المواد الخام", "type_id": 51, "src": 36, "dest": 37},
     "putaway_pkg": {"label": "استلام → مخزن التغليف",      "type_id": 66, "src": 36, "dest": 38},
-    "fg_to_hd":    {"label": "منتج نهائي: سراج ← حي دمشق", "type_id": 57, "src": 55, "dest": 45},
+    "fg_to_hd":    {"label": "منتج نهائي: من سراج (SJ) إلى حي دمشق (HD)", "type_id": 57, "src": 55, "dest": 45},
 }
 
 
