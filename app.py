@@ -927,7 +927,7 @@ def production_screen():
 
         st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
         st.markdown("**🔄 تحويل داخلي**")
-        st.caption("منتج نهائي: من سراج (SJ) إلى حي دمشق (HD)")
+        st.caption("منتج نهائي: من سراج إلى حي دمشق")
         # Locked to the SJ FG → HD FG route only.
         route_key = "fg_to_hd"
         route = oc.TRANSFER_ROUTES[route_key]
@@ -1198,7 +1198,7 @@ def _receiving_tab(uid, pwd):
 
     st.markdown("<hr style='margin:12px 0'>", unsafe_allow_html=True)
     st.markdown("**🔄 تحويل داخلي**")
-    st.caption("منتج نهائي: من سراج (SJ) إلى حي دمشق (HD)")
+    st.caption("منتج نهائي: من سراج إلى حي دمشق")
     # Locked to the SJ FG → HD FG route only in the receiving context.
     route_key = "fg_to_hd"
     route = oc.TRANSFER_ROUTES[route_key]
