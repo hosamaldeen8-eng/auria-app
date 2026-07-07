@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 27
+CLIENT_VERSION = 28
 import xmlrpc.client
 import threading
 from datetime import date
@@ -965,9 +965,30 @@ def get_po_detail(uid, pwd, po_id):
     }
 
 
-def po_confirm(uid, pwd, po_id):
+def po_confirm(uid, pwd, po_id, create_bill=True):
+    """Confirm a purchase order (button_confirm). If create_bill, also generate
+    the vendor bill (account.move) at the same time. Returns (ok, msg)."""
     try:
-        odoo(uid, pwd, "purchase.order", "button_confirm", [[po_id]])
+        try:
+            odoo(uid, pwd, "purchase.order", "button_confirm", [[po_id]])
+        except Exception as e:
+            if "cannot marshal None" not in str(e):
+                raise
+        if create_bill:
+            # Generate the vendor bill for the confirmed PO
+            try:
+                odoo(uid, pwd, "purchase.order", "action_create_invoice", [[po_id]])
+                # Count the bills now linked, to confirm one was made
+                po = odoo(uid, pwd, "purchase.order", "read", [[po_id]],
+                    {"fields": ["invoice_count"]})
+                n = po[0].get("invoice_count", 0) if po else 0
+                if n:
+                    return True, "تم تأكيد أمر الشراء وإنشاء الفاتورة ✓"
+            except Exception as be:
+                if "cannot marshal None" in str(be):
+                    return True, "تم تأكيد أمر الشراء وإنشاء الفاتورة ✓"
+                # PO confirmed but bill failed — report partial success clearly
+                return True, "تم تأكيد أمر الشراء ✓ (تعذّر إنشاء الفاتورة: " + _clean_odoo_error(be) + ")"
         return True, "تم تأكيد أمر الشراء ✓"
     except Exception as e:
         if "cannot marshal None" in str(e):

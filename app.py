@@ -241,7 +241,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 27
+APP_EXPECTS_CLIENT = 28
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1004,7 +1004,7 @@ def procurement_screen():
     recv_label = f"🔄 الاستلام ({n_pending})" if n_pending else "🔄 الاستلام"
     if n_pending:
         _glow_tab_with_count()  # pulse the receiving tab when work is waiting
-    tab1, tab2, tab3 = st.tabs(["🛒 أوامر الشراء", "🧾 المصروفات", recv_label])
+    tab1, tab2, tab3 = st.tabs(["🛒 PO", "🧾 المصروفات", recv_label])
 
     # ── Tab 1: PO Management ──
     with tab1:
@@ -1093,7 +1093,7 @@ def procurement_screen():
                     st.caption(f"⚠️ {len(changed)} منتج بسعر مختلف عن السعر السابق")
 
             # ── Create action ──
-            if st.button("✅ إنشاء طلب الشراء", key="po_create", type="primary", use_container_width=True):
+            if st.button("✅ إنشاء RFQ", key="po_create", type="primary", use_container_width=True):
                 # Resolve vendor (create new if needed)
                 if si == 0:
                     if not ss.get("nv_name", "").strip():
@@ -1157,7 +1157,7 @@ def procurement_screen():
 
 
 def _po_detail(uid, pwd, po_id):
-    if st.button("← أوامر الشراء"):
+    if st.button("← PO"):
         ss.po_open = None; st.rerun()
     d = oc.get_po_detail(uid, pwd, po_id)
     if not d:
@@ -1180,13 +1180,13 @@ def _po_detail(uid, pwd, po_id):
     # Actions — RFQ → PO submission flow
     if d["state"] == "draft":
         # Draft RFQ: send to supplier, or confirm directly, or cancel
-        st.caption("طلب عرض (RFQ) — أرسله للمورّد أو أكّده مباشرة")
+        st.caption("طلب عرض (RFQ) — أرسله للمورّد أو أكّده مباشرة (يُنشئ الفاتورة)")
         c1, c2, c3 = st.columns(3)
         if c1.button("📤 إرسال للمورّد", use_container_width=True):
             ok, msg = oc.send_rfq(uid, pwd, po_id)
             _flash(ok, msg)
             if ok: st.rerun()
-        if c2.button("🟢 تأكيد الأمر", use_container_width=True, type="primary"):
+        if c2.button("🟢 تأكيد PO", use_container_width=True, type="primary"):
             ok, msg = oc.po_confirm(uid, pwd, po_id)
             _flash(ok, msg)
             if ok: st.rerun()
@@ -1195,10 +1195,10 @@ def _po_detail(uid, pwd, po_id):
             _flash(ok, msg)
             if ok: st.rerun()
     elif d["state"] == "sent":
-        # RFQ sent: confirm into a real PO, or cancel
-        st.caption("تم إرسال طلب العرض — بانتظار التأكيد ليصبح أمر شراء")
+        # RFQ sent: confirm into a real PO (+ create the bill), or cancel
+        st.caption("تم إرسال طلب العرض — أكّده ليصبح أمر شراء وتُنشأ الفاتورة")
         c1, c2 = st.columns(2)
-        if c1.button("🟢 تأكيد أمر الشراء", use_container_width=True, type="primary"):
+        if c1.button("🟢 تأكيد PO", use_container_width=True, type="primary"):
             ok, msg = oc.po_confirm(uid, pwd, po_id)
             _flash(ok, msg)
             if ok: st.rerun()
