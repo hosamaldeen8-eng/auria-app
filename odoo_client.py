@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 25
+CLIENT_VERSION = 26
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1234,30 +1234,69 @@ def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200):
 
 
 def get_picking_detail(uid, pwd, picking_id):
-    """Full detail of a delivery picking for the Operations validate view."""
+    """Full detail of a delivery picking for the Operations validate view —
+    includes full recipient contact and per-line + total pricing pulled from
+    the linked sale order."""
     p = odoo(uid, pwd, "stock.picking", "read", [[picking_id]],
-        {"fields": ["name", "state", "origin", "partner_id", "scheduled_date", "move_ids_without_package"]})
+        {"fields": ["name", "state", "origin", "partner_id", "scheduled_date",
+                    "move_ids_without_package", "sale_id"]})
     if not p:
         return None
     p = p[0]
     moves = odoo(uid, pwd, "stock.move", "search_read",
         [[["picking_id", "=", picking_id]]],
         {"fields": ["product_id", "product_uom_qty", "quantity", "state"]})
-    # Customer + order context
+    # Recipient contact (full)
     partner = None
     if p.get("partner_id"):
         pr = odoo(uid, pwd, "res.partner", "read", [[p["partner_id"][0]]],
-            {"fields": ["name", "phone", "mobile", "street", "city"]})
+            {"fields": ["name", "phone", "mobile", "street", "street2", "city",
+                        "email"]})
         partner = pr[0] if pr else None
+    # Pricing from the linked sale order (per-product unit price + order total)
+    price_map = {}
+    order_total = 0.0
+    order_name = p.get("origin") or "—"
+    if p.get("sale_id"):
+        so = odoo(uid, pwd, "sale.order", "read", [[p["sale_id"][0]]],
+            {"fields": ["name", "amount_total", "amount_untaxed"]})
+        if so:
+            order_total = so[0].get("amount_total", 0.0)
+            order_name = so[0].get("name", order_name)
+        so_lines = odoo(uid, pwd, "sale.order.line", "search_read",
+            [[["order_id", "=", p["sale_id"][0]]]],
+            {"fields": ["product_id", "price_unit", "price_subtotal", "product_uom_qty"]})
+        for l in so_lines:
+            if l.get("product_id"):
+                price_map[l["product_id"][0]] = {
+                    "unit": l.get("price_unit", 0.0),
+                    "subtotal": l.get("price_subtotal", 0.0),
+                }
+    lines = []
+    for m in moves:
+        pid = m["product_id"][0]
+        pr = price_map.get(pid, {})
+        lines.append({
+            "name": m["product_id"][1], "qty": m["product_uom_qty"],
+            "done": m.get("quantity", 0), "state": m["state"],
+            "unit_price": pr.get("unit", 0.0),
+            "subtotal": pr.get("subtotal", m["product_uom_qty"] * pr.get("unit", 0.0)),
+        })
+    full_addr = ", ".join(x for x in [
+        partner.get("street") if partner else None,
+        partner.get("street2") if partner else None,
+        partner.get("city") if partner else None] if x) if partner else "—"
     return {
         "id": picking_id, "name": p["name"], "state": p["state"],
-        "order": p.get("origin") or "—",
+        "order": order_name,
         "date": (p.get("scheduled_date") or "")[:16],
         "customer": partner["name"] if partner else "—",
-        "phone": (partner.get("mobile") or partner.get("phone") or "—") if partner else "—",
-        "address": ", ".join(x for x in [partner.get("street"), partner.get("city")] if x) if partner else "—",
-        "lines": [{"name": m["product_id"][1], "qty": m["product_uom_qty"],
-                   "done": m.get("quantity", 0), "state": m["state"]} for m in moves],
+        "phone": (partner.get("phone") if partner else "") or "—",
+        "mobile": (partner.get("mobile") if partner else "") or "—",
+        "email": (partner.get("email") if partner else "") or "—",
+        "address": full_addr or "—",
+        "order_total": order_total,
+        "lines": lines,
     }
 
 

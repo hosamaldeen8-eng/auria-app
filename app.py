@@ -241,7 +241,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 25
+APP_EXPECTS_CLIENT = 26
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1981,6 +1981,45 @@ def _so_detail(uid, pwd, so_id):
         st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span>{l['name']} <span style='opacity:.5;font-size:11px'>×{l['qty']:g}</span></span><span style='color:#D4A853'>{l['subtotal']:,.0f}</span></div>", unsafe_allow_html=True)
 
 
+def _print_delivery_slip(d):
+    """Print-a-delivery-slip button: opens a clean printable slip (recipient,
+    products, total) in a new window via the browser's print dialog."""
+    import html as _html
+    rows = "".join(
+        f"<tr><td>{_html.escape(l['name'])}</td><td style='text-align:center'>{l['qty']:g}</td>"
+        f"<td style='text-align:left'>{l.get('subtotal',0):,.0f}</td></tr>"
+        for l in d["lines"])
+    slip = f"""
+    <div style='font-family:sans-serif;color:#1F2A1F;background:#fff;padding:24px;max-width:520px'>
+      <h2 style='margin:0 0 4px'>Auria — إشعار تسليم</h2>
+      <div style='font-family:monospace;font-size:12px;color:#666'>{_html.escape(d['order'])} · {_html.escape(d['name'])}</div>
+      <hr style='margin:12px 0;border:none;border-top:1px solid #ddd'>
+      <div><b>المستلم:</b> {_html.escape(d['customer'])}</div>
+      <div><b>الهاتف:</b> {_html.escape(d['phone'])} &nbsp; <b>الجوال:</b> {_html.escape(d['mobile'])}</div>
+      <div><b>العنوان:</b> {_html.escape(d['address'])}</div>
+      <table style='width:100%;border-collapse:collapse;margin-top:14px;font-size:13px' border='0'>
+        <thead><tr style='border-bottom:2px solid #333'>
+          <th style='text-align:right'>المنتج</th><th>الكمية</th><th style='text-align:left'>السعر</th>
+        </tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+      <div style='text-align:left;font-weight:700;margin-top:12px;font-size:15px'>
+        الإجمالي: {d.get('order_total',0):,.0f} د.ل</div>
+    </div>"""
+    # Escape for embedding in a JS template string
+    slip_js = slip.replace("`", "\\`").replace("\n", "")
+    html = f"""
+    <button onclick="
+      var w=window.open('','_blank');
+      w.document.write(`<html dir=rtl><head><title>Delivery Slip</title></head><body>{slip_js}</body></html>`);
+      w.document.close(); w.focus(); setTimeout(function(){{w.print();}},250);"
+      style="width:100%;background:#1A231A;color:#C9D3BF;border:1px solid #7FB069;
+             border-radius:10px;padding:10px;font-size:14px;cursor:pointer;
+             font-family:sans-serif;margin:6px 0">
+      🖨️ طباعة إشعار التسليم</button>"""
+    components.html(html, height=56)
+
+
 def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
     """Picking detail. mode='delivery' (Yamamah handoff — shows customer
     contact) or mode='receive' (internal SJ→HD transfer — no contact,
@@ -2006,16 +2045,43 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
             <div style='font-size:12px;opacity:.75;margin-top:4px'>{d.get('origin') or 'استلام البضائع المرتجعة إلى المخزون'}</div>
         </div>""", unsafe_allow_html=True)
     else:
-        # Yamamah delivery — customer contact is relevant
+        # Yamamah delivery — full recipient contact
+        contact_rows = "".join(
+            f"<div style='display:flex;gap:8px;font-size:12px;opacity:.85;margin-top:3px'>{ic} {val}</div>"
+            for ic, val in [("📞", d["phone"]), ("📱", d["mobile"]), ("📧", d["email"]), ("📍", d["address"])]
+            if val and val != "—")
         st.markdown(f"""<div class='greeting'>
             <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['order']} · {d['name']}</div>
-            <div style='font-size:18px;font-weight:700'>{d['customer']}</div>
-            <div style='font-size:12px;opacity:.75;margin-top:4px'>📞 {d['phone']}<br>📍 {d['address']}</div>
+            <div style='font-size:18px;font-weight:700;margin-top:2px'>{d['customer']}</div>
+            {contact_rows}
         </div>""", unsafe_allow_html=True)
 
     st.markdown("**المنتجات**")
+    show_prices = mode == "delivery"
     for l in d["lines"]:
-        st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span>{l['name']}</span><span style='opacity:.8'>{l['done']:g}/{l['qty']:g}</span></div>", unsafe_allow_html=True)
+        qty = l["qty"]
+        # Highlight quantity in orange when more than one unit
+        qty_style = ("background:rgba(224,140,60,.20);color:#E8944A;font-weight:700;"
+                     "padding:1px 8px;border-radius:8px") if qty > 1 else "opacity:.8"
+        price_bit = ""
+        if show_prices and l.get("subtotal"):
+            price_bit = (f"<span style='color:#D4A853;font-size:12px;margin-inline-start:10px'>"
+                         f"{l['unit_price']:,.2f} × {qty:g} = {l['subtotal']:,.0f}</span>")
+        st.markdown(
+            f"<div class='task-row' style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<span>{l['name']}{price_bit}</span>"
+            f"<span style='{qty_style}'>{l['done']:g}/{qty:g}</span></div>",
+            unsafe_allow_html=True)
+
+    # Order total (delivery only)
+    if show_prices and d.get("order_total"):
+        st.markdown(
+            f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:8px 0;font-size:15px'>"
+            f"الإجمالي: {d['order_total']:,.0f} د.ل</div>", unsafe_allow_html=True)
+
+    # Print delivery slip (delivery only)
+    if show_prices:
+        _print_delivery_slip(d)
 
     if d["state"] not in ("done", "cancel"):
         btn_label = {
