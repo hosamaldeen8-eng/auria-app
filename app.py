@@ -170,15 +170,37 @@ st.markdown("""
   div[class*="st-key-btnrow_emoji"] .stButton>button:hover {
     background:rgba(127,176,105,.20); border-color:#7FB069; transform:translateY(-2px); }
   .auria-loader{position:fixed;inset:0;background:rgba(20,27,20,.78);display:none;align-items:center;justify-content:center;z-index:99999}
-  body:has([data-testid="stStatusWidget"]) .auria-loader{display:flex}
+  .auria-loader.show{display:flex}
   .auria-loader img{width:70px;height:70px;border-radius:50%;animation:apulse 1.1s ease-in-out infinite;box-shadow:0 0 34px rgba(127,176,105,.35)}
   @keyframes apulse{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.16);opacity:1}}
 </style>
 """, unsafe_allow_html=True)
 
-# Branded loading overlay — appears automatically whenever the app is
-# processing (page moves, button clicks) via the :has() selector above.
-st.markdown(f"<div class='auria-loader'><img src='data:image/png;base64,{EMBLEM_SM}'/></div>", unsafe_allow_html=True)
+# Branded loading overlay — shows ONLY when navigating page to page (not on
+# every rerun). We compare the current screen to the last one rendered; on a
+# change we flash the overlay briefly, then a tiny script hides it so the UI
+# stays interactive for in-page actions (adding a product, filters, etc.).
+_cur_screen = ss.get("screen", "login")
+_screen_changed = ss.get("_last_screen") != _cur_screen
+ss._last_screen = _cur_screen
+_loader_cls = "auria-loader show" if _screen_changed else "auria-loader"
+st.markdown(
+    f"<div class='{_loader_cls}' id='auria-loader'>"
+    f"<img src='data:image/png;base64,{EMBLEM_SM}'/></div>",
+    unsafe_allow_html=True)
+if _screen_changed:
+    # Auto-hide the overlay shortly after the new page paints, so it's a brief
+    # transition flash and never blocks interaction.
+    components.html("""
+    <script>
+    (function(){
+      const doc = window.parent.document;
+      setTimeout(function(){
+        const el = doc.getElementById('auria-loader');
+        if (el) el.classList.remove('show');
+      }, 450);
+    })();
+    </script>""", height=0)
 
 # ── Floating "scroll to top" button ──────────────────────────
 # Injected into the parent document (the button lives outside this iframe so
