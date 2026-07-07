@@ -2065,7 +2065,8 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
                      "padding:1px 8px;border-radius:8px") if qty > 1 else "opacity:.8"
         price_bit = ""
         if show_prices and l.get("subtotal"):
-            price_bit = (f"<span style='color:#D4A853;font-size:12px;margin-inline-start:10px'>"
+            price_bit = (f"<span dir='ltr' style='display:inline-block;color:#D4A853;font-size:12px;"
+                         f"margin-inline-start:10px;unicode-bidi:isolate'>"
                          f"{l['unit_price']:,.2f} × {qty:g} = {l['subtotal']:,.0f}</span>")
         st.markdown(
             f"<div class='task-row' style='display:flex;justify-content:space-between;align-items:center'>"
