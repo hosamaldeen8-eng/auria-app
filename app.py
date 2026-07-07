@@ -1545,18 +1545,29 @@ def sales_screen():
 
     st.markdown("<hr style='margin:8px 0'>", unsafe_allow_html=True)
     st.markdown("**طلبات البيع**")
+    # Persist filter choices across open-order → back navigation. Streamlit can
+    # drop a keyed widget's state while it's not rendered (detail view), so we
+    # mirror the values into stable keys and seed the widgets from them.
+    _state_opts = ["sale", "draft", "sent", "all", "cancel"]
+    _ship_opts = ["all"] + list(oc.SHORT_SHIP_STATUS.keys()) + ["none"]
+    _saved_state = ss.get("so_state_val", "sale")
+    _saved_ship = ss.get("so_ship_val", "all")
     f1, f2 = st.columns([2, 3])
-    so_state = f1.selectbox("الحالة", ["sale", "draft", "sent", "all", "cancel"],
+    so_state = f1.selectbox("الحالة", _state_opts,
+        index=_state_opts.index(_saved_state) if _saved_state in _state_opts else 0,
         format_func=lambda k: {"sale": "مؤكد", "draft": "مسودة", "sent": "عرض سعر",
                                "all": "الكل", "cancel": "ملغي"}[k], key="so_state_f")
-    so_q = f2.text_input(t("search"), key="so_q", placeholder="رقم أو عميل")
+    ss.so_state_val = so_state
+    so_q = f2.text_input(t("search"), value=ss.get("so_q_val", ""), key="so_q", placeholder="رقم أو عميل")
+    ss.so_q_val = so_q
 
     # Shipment-status filter — short, clean groupings (swapped from Ops)
-    ship_opts = ["all"] + list(oc.SHORT_SHIP_STATUS.keys()) + ["none"]
-    so_ship = st.selectbox("حالة الشحنة", ship_opts,
+    so_ship = st.selectbox("حالة الشحنة", _ship_opts,
+        index=_ship_opts.index(_saved_ship) if _saved_ship in _ship_opts else 0,
         format_func=lambda k: "كل الشحنات" if k == "all" else (
             "بدون شحنة" if k == "none" else oc.SHORT_SHIP_STATUS[k]["label"]),
         key="so_ship_f")
+    ss.so_ship_val = so_ship
 
     # Reset the load-more limit when the filter/search changes
     filt_sig = f"{so_state}|{so_q}|{so_ship}"
