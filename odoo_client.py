@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 28
+CLIENT_VERSION = 29
 import xmlrpc.client
 import threading
 from datetime import date
@@ -967,7 +967,9 @@ def get_po_detail(uid, pwd, po_id):
 
 def po_confirm(uid, pwd, po_id, create_bill=True):
     """Confirm a purchase order (button_confirm). If create_bill, also generate
-    the vendor bill (account.move) at the same time. Returns (ok, msg)."""
+    the vendor bill (account.move) — created as a DRAFT only. It is never
+    posted and never paid here; posting/payment stays a deliberate accounting
+    step done in Odoo after the invoice is reviewed. Returns (ok, msg)."""
     try:
         try:
             odoo(uid, pwd, "purchase.order", "button_confirm", [[po_id]])
@@ -975,20 +977,28 @@ def po_confirm(uid, pwd, po_id, create_bill=True):
             if "cannot marshal None" not in str(e):
                 raise
         if create_bill:
-            # Generate the vendor bill for the confirmed PO
             try:
                 odoo(uid, pwd, "purchase.order", "action_create_invoice", [[po_id]])
-                # Count the bills now linked, to confirm one was made
-                po = odoo(uid, pwd, "purchase.order", "read", [[po_id]],
-                    {"fields": ["invoice_count"]})
-                n = po[0].get("invoice_count", 0) if po else 0
-                if n:
-                    return True, "تم تأكيد أمر الشراء وإنشاء الفاتورة ✓"
             except Exception as be:
-                if "cannot marshal None" in str(be):
-                    return True, "تم تأكيد أمر الشراء وإنشاء الفاتورة ✓"
-                # PO confirmed but bill failed — report partial success clearly
-                return True, "تم تأكيد أمر الشراء ✓ (تعذّر إنشاء الفاتورة: " + _clean_odoo_error(be) + ")"
+                if "cannot marshal None" not in str(be):
+                    # PO confirmed but bill failed — report partial success clearly
+                    return True, "تم تأكيد أمر الشراء ✓ (تعذّر إنشاء الفاتورة: " + _clean_odoo_error(be) + ")"
+            # Ensure any bill we just created is left as a DRAFT (not posted/paid)
+            po = odoo(uid, pwd, "purchase.order", "read", [[po_id]],
+                {"fields": ["invoice_ids", "invoice_count"]})
+            bill_ids = po[0].get("invoice_ids", []) if po else []
+            if bill_ids:
+                bills = odoo(uid, pwd, "account.move", "read", [bill_ids],
+                    {"fields": ["state"]})
+                # If any bill is not in draft, pull it back to draft so confirming
+                # a PO never results in a posted/paid bill.
+                for b in bills:
+                    if b.get("state") == "posted":
+                        try:
+                            odoo(uid, pwd, "account.move", "button_draft", [[b["id"]]])
+                        except Exception:
+                            pass
+                return True, "تم تأكيد أمر الشراء وإنشاء الفاتورة (مسودة) ✓"
         return True, "تم تأكيد أمر الشراء ✓"
     except Exception as e:
         if "cannot marshal None" in str(e):
@@ -997,7 +1007,17 @@ def po_confirm(uid, pwd, po_id, create_bill=True):
 
 
 def po_cancel(uid, pwd, po_id):
+    """Cancel a purchase order. Also cancels any linked draft vendor bill so
+    cancelling doesn't leave an orphan invoice."""
     try:
+        # Cancel linked draft/posted bills first
+        po = odoo(uid, pwd, "purchase.order", "read", [[po_id]], {"fields": ["invoice_ids"]})
+        bill_ids = po[0].get("invoice_ids", []) if po else []
+        for bid in bill_ids:
+            try:
+                odoo(uid, pwd, "account.move", "button_cancel", [[bid]])
+            except Exception:
+                pass
         odoo(uid, pwd, "purchase.order", "button_cancel", [[po_id]])
         return True, "تم الإلغاء"
     except Exception as e:

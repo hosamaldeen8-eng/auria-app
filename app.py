@@ -241,7 +241,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 28
+APP_EXPECTS_CLIENT = 29
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1004,7 +1004,7 @@ def procurement_screen():
     recv_label = f"🔄 الاستلام ({n_pending})" if n_pending else "🔄 الاستلام"
     if n_pending:
         _glow_tab_with_count()  # pulse the receiving tab when work is waiting
-    tab1, tab2, tab3 = st.tabs(["🛒 PO", "🧾 المصروفات", recv_label])
+    tab1, tab2, tab3 = st.tabs(["🛒 PO", "🧾 Expenses", recv_label])
 
     # ── Tab 1: PO Management ──
     with tab1:
@@ -1206,8 +1206,23 @@ def _po_detail(uid, pwd, po_id):
             ok, msg = oc.po_cancel(uid, pwd, po_id)
             _flash(ok, msg)
             if ok: st.rerun()
-
-    # ── Document capture (supplier invoice / delivery note) ──
+    elif d["state"] == "purchase":
+        # Confirmed PO: can still be cancelled (with a guard, since a draft
+        # bill may already exist). Cancelling also cancels the linked bill.
+        st.caption("أمر شراء مؤكد")
+        if ss.get(f"po_cancel_confirm_{po_id}"):
+            st.warning("سيُلغى أمر الشراء (والفاتورة المرتبطة إن وُجدت). متأكد؟")
+            cc1, cc2 = st.columns(2)
+            if cc1.button("✖️ نعم، ألغِ الأمر", use_container_width=True, type="primary"):
+                ok, msg = oc.po_cancel(uid, pwd, po_id)
+                ss[f"po_cancel_confirm_{po_id}"] = False
+                _flash(ok, msg)
+                if ok: st.rerun()
+            if cc2.button("تراجع", use_container_width=True):
+                ss[f"po_cancel_confirm_{po_id}"] = False; st.rerun()
+        else:
+            if st.button("✖️ إلغاء أمر الشراء", use_container_width=True):
+                ss[f"po_cancel_confirm_{po_id}"] = True; st.rerun()
     with st.expander("📎 إرفاق مستند (فاتورة المورّد / إيصال)"):
         atts = oc.get_po_attachments(uid, pwd, po_id)
         if atts:
