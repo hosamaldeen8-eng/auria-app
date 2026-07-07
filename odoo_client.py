@@ -223,12 +223,15 @@ def get_dept_kpis(uid, pwd, dept):
         ]
     if dept == "operations":
         today = today_str()
-        deliv = odoo(uid, pwd, "stock.picking", "search_count", [[["date_done", ">=", f"{today} 00:00:00"], ["state", "=", "done"]]])
-        # Yamamah live: out for delivery + failed
+        # Orders validated to go from HD FG → Yamamah today (picking type 3:
+        # "Pick From FG to Alyamama"). This is the dispatch-to-courier count.
+        deliv = odoo(uid, pwd, "stock.picking", "search_count",
+            [[["picking_type_id", "=", 3], ["date_done", ">=", f"{today} 00:00:00"], ["state", "=", "done"]]])
+        # Yamamah live: out for delivery + returned
         out_delivery = odoo(uid, pwd, "accurate.shipment", "search_count", [[["state", "=", "sent"]]])
         returned = odoo(uid, pwd, "accurate.shipment", "search_count", [[["state", "=", "returned"]]])
         return [
-            ("Deliveries Today", deliv),
+            ("مُرسل ليمامة اليوم", deliv),
             ("قيد التوصيل", out_delivery),
             ("مرتجع", returned),
         ]
