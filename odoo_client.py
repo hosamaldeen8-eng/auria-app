@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 26
+CLIENT_VERSION = 27
 import xmlrpc.client
 import threading
 from datetime import date
@@ -1220,13 +1220,16 @@ def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200):
         domain += ["|", ["name", "ilike", query], ["origin", "ilike", query]]
     total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
-        {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
+        {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id",
+                    "accurate_shipment_code", "accurate_tracking_url"],
          "limit": limit, "order": "scheduled_date asc"})  # oldest first
     out = PagedList({
         "id": p["id"], "name": p["name"], "state": p["state"],
         "order": p.get("origin") or "—",
         "customer": p["partner_id"][1] if p.get("partner_id") else "—",
         "date": (p.get("scheduled_date") or "")[:10],
+        "shipment_code": p.get("accurate_shipment_code") or "",
+        "tracking_url": p.get("accurate_tracking_url") or "",
     } for p in picks)
     out.total = total
     out.shown = len(picks)
@@ -1239,7 +1242,8 @@ def get_picking_detail(uid, pwd, picking_id):
     the linked sale order."""
     p = odoo(uid, pwd, "stock.picking", "read", [[picking_id]],
         {"fields": ["name", "state", "origin", "partner_id", "scheduled_date",
-                    "move_ids_without_package", "sale_id"]})
+                    "move_ids_without_package", "sale_id",
+                    "accurate_shipment_code", "accurate_tracking_url", "accurate_status"]})
     if not p:
         return None
     p = p[0]
@@ -1296,6 +1300,9 @@ def get_picking_detail(uid, pwd, picking_id):
         "email": (partner.get("email") if partner else "") or "—",
         "address": full_addr or "—",
         "order_total": order_total,
+        "shipment_code": p.get("accurate_shipment_code") or "",
+        "tracking_url": p.get("accurate_tracking_url") or "",
+        "ship_status": p.get("accurate_status") or "",
         "lines": lines,
     }
 

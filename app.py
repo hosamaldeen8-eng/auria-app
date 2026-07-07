@@ -241,7 +241,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 26
+APP_EXPECTS_CLIENT = 27
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1400,6 +1400,15 @@ def operations_screen():
         st.caption(f"عرض {p_shown} من {p_total} طلب" if p_total > p_shown else f"{p_total} طلب")
         for p in picks:
             st_ar = {"assigned":"🟡 جاهز","confirmed":"🟠 بانتظار","waiting":"⚪ ينتظر","done":"✅ تم"}.get(p["state"], p["state"])
+            # Shipment code + tracking link (LTR-isolated so the code reads right)
+            ship_line = ""
+            if p.get("shipment_code"):
+                track = (f"<a href='{p['tracking_url']}' target='_blank' style='color:#7FB069;text-decoration:none'>🔗 تتبّع</a>"
+                         if p.get("tracking_url") else "")
+                ship_line = (f"<div style='margin-top:5px;font-size:11px'>"
+                             f"<span dir='ltr' style='unicode-bidi:isolate;background:rgba(127,176,105,.12);"
+                             f"color:#7FB069;padding:2px 8px;border-radius:7px'>📦 {p['shipment_code']}</span>"
+                             f"<span style='margin-inline-start:8px'>{track}</span></div>")
             card = (
                 "<div class='task-row' style='margin-bottom:4px'>"
                 "<div style='display:flex;justify-content:space-between;align-items:center'>"
@@ -1407,6 +1416,7 @@ def operations_screen():
                 f"<span style='font-size:11px'>{st_ar}</span></div>"
                 f"<div style='font-weight:700;margin:7px 0 3px'>{p['customer']}</div>"
                 f"<div style='font-size:11px;opacity:.6'>{p['name']} · {p['date']}</div>"
+                f"{ship_line}"
                 "</div>"
             )
             st.markdown(card, unsafe_allow_html=True)
@@ -1981,43 +1991,18 @@ def _so_detail(uid, pwd, so_id):
         st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between'><span>{l['name']} <span style='opacity:.5;font-size:11px'>×{l['qty']:g}</span></span><span style='color:#D4A853'>{l['subtotal']:,.0f}</span></div>", unsafe_allow_html=True)
 
 
-def _print_delivery_slip(d):
-    """Print-a-delivery-slip button: opens a clean printable slip (recipient,
-    products, total) in a new window via the browser's print dialog."""
-    import html as _html
-    rows = "".join(
-        f"<tr><td>{_html.escape(l['name'])}</td><td style='text-align:center'>{l['qty']:g}</td>"
-        f"<td style='text-align:left'>{l.get('subtotal',0):,.0f}</td></tr>"
-        for l in d["lines"])
-    slip = f"""
-    <div style='font-family:sans-serif;color:#1F2A1F;background:#fff;padding:24px;max-width:520px'>
-      <h2 style='margin:0 0 4px'>Auria — إشعار تسليم</h2>
-      <div style='font-family:monospace;font-size:12px;color:#666'>{_html.escape(d['order'])} · {_html.escape(d['name'])}</div>
-      <hr style='margin:12px 0;border:none;border-top:1px solid #ddd'>
-      <div><b>المستلم:</b> {_html.escape(d['customer'])}</div>
-      <div><b>الهاتف:</b> {_html.escape(d['phone'])} &nbsp; <b>الجوال:</b> {_html.escape(d['mobile'])}</div>
-      <div><b>العنوان:</b> {_html.escape(d['address'])}</div>
-      <table style='width:100%;border-collapse:collapse;margin-top:14px;font-size:13px' border='0'>
-        <thead><tr style='border-bottom:2px solid #333'>
-          <th style='text-align:right'>المنتج</th><th>الكمية</th><th style='text-align:left'>السعر</th>
-        </tr></thead>
-        <tbody>{rows}</tbody>
-      </table>
-      <div style='text-align:left;font-weight:700;margin-top:12px;font-size:15px'>
-        الإجمالي: {d.get('order_total',0):,.0f} د.ل</div>
-    </div>"""
-    # Escape for embedding in a JS template string
-    slip_js = slip.replace("`", "\\`").replace("\n", "")
+def _print_odoo_slip(picking_id):
+    """Open Odoo's native Delivery Slip PDF for this picking — the same
+    document Odoo's 'Print' button generates. The user's browser is already
+    logged into Odoo, so the report renders directly."""
+    url = f"https://odoo.auria.global/report/pdf/stock.report_deliveryslip/{picking_id}"
     html = f"""
-    <button onclick="
-      var w=window.open('','_blank');
-      w.document.write(`<html dir=rtl><head><title>Delivery Slip</title></head><body>{slip_js}</body></html>`);
-      w.document.close(); w.focus(); setTimeout(function(){{w.print();}},250);"
-      style="width:100%;background:#1A231A;color:#C9D3BF;border:1px solid #7FB069;
-             border-radius:10px;padding:10px;font-size:14px;cursor:pointer;
-             font-family:sans-serif;margin:6px 0">
-      🖨️ طباعة إشعار التسليم</button>"""
-    components.html(html, height=56)
+    <a href="{url}" target="_blank" rel="noopener"
+       style="display:block;text-align:center;background:#1A231A;color:#C9D3BF;
+              border:1px solid #7FB069;border-radius:10px;padding:11px;
+              font-size:14px;text-decoration:none;font-family:sans-serif;margin:6px 0">
+      🖨️ طباعة إشعار التسليم (من أودو)</a>"""
+    components.html(html, height=58)
 
 
 def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
@@ -2045,16 +2030,25 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
             <div style='font-size:12px;opacity:.75;margin-top:4px'>{d.get('origin') or 'استلام البضائع المرتجعة إلى المخزون'}</div>
         </div>""", unsafe_allow_html=True)
     else:
-        # Yamamah delivery — full recipient contact
+        # Yamamah delivery — full recipient contact + shipment code
         contact_rows = "".join(
             f"<div style='display:flex;gap:8px;font-size:12px;opacity:.85;margin-top:3px'>{ic} {val}</div>"
             for ic, val in [("📞", d["phone"]), ("📱", d["mobile"]), ("📧", d["email"]), ("📍", d["address"])]
             if val and val != "—")
+        ship_row = ""
+        if d.get("shipment_code"):
+            ship_row = (f"<div style='margin-top:8px;display:inline-block;background:rgba(212,168,83,.14);"
+                        f"color:#D4A853;padding:3px 12px;border-radius:8px;font-size:12px;font-weight:700'>"
+                        f"📦 شحنة يمامة: {d['shipment_code']}</div>")
         st.markdown(f"""<div class='greeting'>
             <div style='font-family:monospace;font-size:12px;opacity:.6'>{d['order']} · {d['name']}</div>
             <div style='font-size:18px;font-weight:700;margin-top:2px'>{d['customer']}</div>
             {contact_rows}
+            {ship_row}
         </div>""", unsafe_allow_html=True)
+        # Tracking link if available
+        if d.get("tracking_url"):
+            _tracking_with_copy(d.get("shipment_code", ""), d["tracking_url"])
 
     st.markdown("**المنتجات**")
     show_prices = mode == "delivery"
@@ -2080,9 +2074,10 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
             f"<div style='text-align:left;font-weight:700;color:#D4A853;margin:8px 0;font-size:15px'>"
             f"الإجمالي: {d['order_total']:,.0f} د.ل</div>", unsafe_allow_html=True)
 
-    # Print delivery slip (delivery only)
+    # Print delivery slip — opens Odoo's own Delivery Slip report (same as
+    # the Print button in Odoo), rendered by Odoo's report engine.
     if show_prices:
-        _print_delivery_slip(d)
+        _print_odoo_slip(picking_id)
 
     if d["state"] not in ("done", "cancel"):
         btn_label = {
