@@ -451,9 +451,14 @@ def login_screen():
 
     c1, c2, c3 = st.columns([1, 3, 1])
     with c2:
-        email = st.text_input(t("email"), key="login_email")
-        pwd = st.text_input(t("password"), type="password", key="login_pwd")
-        if st.button(t("signin"), use_container_width=True, type="primary"):
+        # A form submits on Enter from any field — so typing email + password
+        # and hitting Enter (or tapping دخول) logs in directly, with no
+        # separate "press Enter to apply" step per field.
+        with st.form("login_form", clear_on_submit=False, border=False):
+            email = st.text_input(t("email"), key="login_email")
+            pwd = st.text_input(t("password"), type="password", key="login_pwd")
+            submitted = st.form_submit_button(t("signin"), use_container_width=True, type="primary")
+        if submitted:
             uid, info = oc.authenticate(email, pwd)
             if uid:
                 ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email.strip()
