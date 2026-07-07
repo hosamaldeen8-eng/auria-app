@@ -180,9 +180,10 @@ st.markdown("""
 # every rerun). We compare the current screen to the last one rendered; on a
 # change we flash the overlay briefly, then a tiny script hides it so the UI
 # stays interactive for in-page actions (adding a product, filters, etc.).
-_cur_screen = ss.get("screen", "login")
-_screen_changed = ss.get("_last_screen") != _cur_screen
-ss._last_screen = _cur_screen
+# NOTE: the `ss` alias isn't defined until later, so use st.session_state here.
+_cur_screen = st.session_state.get("screen", "login")
+_screen_changed = st.session_state.get("_last_screen") != _cur_screen
+st.session_state["_last_screen"] = _cur_screen
 _loader_cls = "auria-loader show" if _screen_changed else "auria-loader"
 st.markdown(
     f"<div class='{_loader_cls}' id='auria-loader'>"
