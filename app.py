@@ -169,7 +169,7 @@ st.markdown("""
     aspect-ratio:1/1; font-size:18px; padding:0; min-height:0; }
   div[class*="st-key-btnrow_emoji"] .stButton>button:hover {
     background:rgba(127,176,105,.20); border-color:#7FB069; transform:translateY(-2px); }
-  .auria-loader{position:fixed;inset:0;background:rgba(20,27,20,.78);display:none;align-items:center;justify-content:center;z-index:99999}
+  .auria-loader{position:fixed;inset:0;background:#141B14;display:none;align-items:center;justify-content:center;z-index:2147483647}
   .auria-loader.show{display:flex}
   .auria-loader img{width:70px;height:70px;border-radius:50%;animation:apulse 1.1s ease-in-out infinite;box-shadow:0 0 34px rgba(127,176,105,.35)}
   @keyframes apulse{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.16);opacity:1}}
@@ -178,10 +178,13 @@ st.markdown("""
 
 # Branded loading overlay — shows ONLY when navigating page to page (not on
 # every rerun). We compare the current screen to the last one rendered; on a
-# change we flash the overlay briefly, then a tiny script hides it so the UI
-# stays interactive for in-page actions (adding a product, filters, etc.).
+# change we flash the fully-opaque overlay so stale elements from the previous
+# screen never show through, then a tiny script hides it once the new page
+# paints so the UI stays interactive for in-page actions.
 # NOTE: the `ss` alias isn't defined until later, so use st.session_state here.
-_cur_screen = st.session_state.get("screen", "login")
+# Treat logged-out state as its own "login" screen so the login↔app transition
+# (where the old nav/header would otherwise bleed through) is caught too.
+_cur_screen = "login" if not st.session_state.get("uid") else st.session_state.get("screen", "home")
 _screen_changed = st.session_state.get("_last_screen") != _cur_screen
 st.session_state["_last_screen"] = _cur_screen
 _loader_cls = "auria-loader show" if _screen_changed else "auria-loader"
@@ -2633,6 +2636,7 @@ def profile_screen():
         for k in ["uid","pwd","info","email","cs_open","mo_open","auto_login_tried"]:
             ss.pop(k, None)
         ss.auto_login_tried = True  # don't instantly re-login from cookie
+        ss.screen = "home"  # reset so no stale screen state lingers into login
         st.rerun()
 
 
