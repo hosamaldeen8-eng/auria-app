@@ -425,8 +425,9 @@ def _rear_camera(key, label="📸 صوّر الإيصال"):
 # ── PERSISTENT LOGIN (cookies, no external component) ───────
 # Read: st.context.cookies (native Streamlit ≥1.37, reliable)
 # Write/delete: a tiny JS snippet — parent.document.cookie
-def save_login_cookie(email, pwd):
-    token = base64.b64encode(f"{email}|{pwd}".encode()).decode()
+def save_login_cookie(email, pwd, screen="home"):
+    # Store email|pwd|screen so a refresh restores the session AND the page.
+    token = base64.b64encode(f"{email}|{pwd}|{screen}".encode()).decode()
     components.html(
         f"<script>parent.document.cookie = 'auria_auth={token}; "
         f"max-age=2592000; path=/; SameSite=Lax';</script>",
@@ -440,16 +441,24 @@ def clear_login_cookie():
         height=0,
     )
 
-# Deferred cookie ops — st.rerun() can interrupt the JS iframe before it
-# executes, so writes happen on the render AFTER the rerun.
-if ss.get("pending_cookie_save") and ss.uid:
-    email_c, pwd_c = ss.pop("pending_cookie_save")
-    save_login_cookie(email_c, pwd_c)
+# Keep the cookie's stored screen fresh on every logged-in render, so a refresh
+# lands you back on the page you were actually on (not just 'home'). This also
+# means the cookie is (re)written on normal navigation — a reliable moment,
+# unlike the single post-login write that can race the rerun.
+if ss.uid and ss.get("email") and ss.get("pwd"):
+    _last_saved = ss.get("_cookie_screen_saved")
+    _now_screen = ss.get("screen", "home")
+    if _last_saved != _now_screen or ss.get("pending_cookie_save"):
+        ss.pop("pending_cookie_save", None)
+        ss["_cookie_screen_saved"] = _now_screen
+        save_login_cookie(ss.email, ss.pwd, _now_screen)
+
 if ss.get("pending_cookie_clear"):
     ss.pop("pending_cookie_clear")
     clear_login_cookie()
 
-# Auto-login: if no session but a saved cookie exists, sign in silently
+# Auto-login: if no session but a saved cookie exists, sign in silently and
+# restore the screen the user was last on.
 if not ss.uid and not ss.get("auto_login_tried"):
     raw = None
     try:
@@ -459,10 +468,14 @@ if not ss.uid and not ss.get("auto_login_tried"):
     if raw:
         ss.auto_login_tried = True
         try:
-            email, pwd = base64.b64decode(raw.encode()).decode().split("|", 1)
+            parts = base64.b64decode(raw.encode()).decode().split("|")
+            email, pwd = parts[0], parts[1]
+            saved_screen = parts[2] if len(parts) > 2 else "home"
             uid, info = oc.authenticate(email, pwd)
             if uid:
                 ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email
+                ss.screen = saved_screen  # land back on the same page
+                ss["_cookie_screen_saved"] = saved_screen
                 oc.touch_session(uid, pwd)
                 st.rerun()
         except Exception:
