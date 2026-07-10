@@ -851,7 +851,7 @@ def production_screen():
     _tr_label = f"🔄 تحويلات ({len(_prod_pending)})" if _prod_pending else "🔄 تحويلات"
     if _prod_pending:
         _glow_tab_with_count()
-    tab1, tab2, tab3, tab4 = st.tabs([f"⚙️ {t('mos')}", "▶️ Timer", f"📦 {t('inventory')}", _tr_label])
+    tab1, tab3, tab4 = st.tabs([f"⚙️ {t('mos')}", f"📦 {t('inventory')}", _tr_label])
 
     # ── Tab 1: MOs + create from BOM dropdown ──
     with tab1:
@@ -919,42 +919,6 @@ def production_screen():
                 ss.mo_open = mo["id"]
                 st.rerun()
             st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
-
-    # ── Tab 2: Work order timers (start/stop) ──
-    with tab2:
-        st.caption("ابدأ وأوقف مؤقّت العمل لكل أمر شغل")
-        wos = oc.get_workorders(uid, pwd)
-        if not wos:
-            st.info("لا توجد أوامر شغل نشطة")
-        for w in wos:
-            pct = min(100, round(w["duration"] / w["expected"] * 100)) if w["expected"] else 0
-            state_ar = {"progress":"جاري","ready":"جاهز","waiting":"بانتظار مكوّنات","pending":"بانتظار","done":"منتهي"}.get(w["state"], w["state"])
-            working_dot = "🟢" if w["working"] else "⚪"
-            st.markdown(f"""<div class='task-row'>
-                <div style='display:flex;justify-content:space-between;align-items:start'>
-                  <div><b>{w['product']}</b><br><span style='font-family:monospace;color:#888;font-size:11px'>{w['mo']}</span></div>
-                  <span style='font-size:11px'>{working_dot} {state_ar}</span>
-                </div>
-                <div style='margin-top:6px;background:rgba(255,255,255,.12);border-radius:6px;height:6px;overflow:hidden'>
-                  <div style='width:{pct}%;height:100%;background:{"#A32D2D" if pct>100 else "#3B6D11"}'></div>
-                </div>
-                <div style='font-size:11px;color:#888;margin-top:3px'>{w['duration']:g} / {w['expected']:g} دقيقة ({pct}%)</div>
-            </div>""", unsafe_allow_html=True)
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                if not w["working"] and st.button("▶️ ابدأ", key=f"start_{w['id']}", use_container_width=True):
-                    ok, msg = oc.wo_start(uid, pwd, w["id"])
-                    if ok: st.rerun()
-                    else: st.error(msg)
-                if w["working"] and st.button("⏸️ أوقف", key=f"stop_{w['id']}", use_container_width=True):
-                    ok, msg = oc.wo_stop(uid, pwd, w["id"])
-                    if ok: st.rerun()
-                    else: st.error(msg)
-            with c2:
-                if st.button("✅ أنهِ", key=f"fin_{w['id']}", use_container_width=True):
-                    ok, msg = oc.wo_finish(uid, pwd, w["id"])
-                    if ok: st.success("✓"); st.rerun()
-                    else: st.error(msg)
 
     # ── Tab 3: Inventory ──
     with tab3:
