@@ -209,7 +209,10 @@ if _screen_changed:
 # ── Floating "scroll to top" button ──────────────────────────
 # Injected into the parent document (the button lives outside this iframe so
 # it floats over the whole app). Appears after scrolling down; jumps to top.
-components.html("""
+# Only on logged-in screens — not needed on the short login page, and keeping
+# it off there avoids extra iframe reruns that could stack the login form.
+if st.session_state.get("uid"):
+    components.html("""
 <script>
 (function(){
   const doc = window.parent.document;
@@ -470,34 +473,38 @@ if not ss.uid and not ss.get("auto_login_tried"):
 
 # ── LOGIN ────────────────────────────────────────────────────
 def login_screen():
-    st.markdown(f"""
-    <div style='text-align:center; padding:40px 0 20px;'>
-      <img src='data:image/png;base64,{LOGO_B64}' width='220'/>
-    </div>""", unsafe_allow_html=True)
+    # Wrap the whole screen in one keyed container so Streamlit reconciles it
+    # as a single stable slot and never stacks a second copy of the form during
+    # rerun-heavy moments (cookie auto-login, loader iframes).
+    with st.container(key="login_root"):
+        st.markdown(f"""
+        <div style='text-align:center; padding:40px 0 20px;'>
+          <img src='data:image/png;base64,{LOGO_B64}' width='220'/>
+        </div>""", unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([1, 3, 1])
-    with c2:
-        # A form submits on Enter from any field — so typing email + password
-        # and hitting Enter (or tapping دخول) logs in directly, with no
-        # separate "press Enter to apply" step per field.
-        with st.form("login_form", clear_on_submit=False, border=False):
-            email = st.text_input(t("email"), key="login_email")
-            pwd = st.text_input(t("password"), type="password", key="login_pwd")
-            submitted = st.form_submit_button(t("signin"), use_container_width=True, type="primary")
-        if submitted:
-            uid, info = oc.authenticate(email, pwd)
-            if uid:
-                ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email.strip()
-                ss.pending_cookie_save = (email.strip(), pwd)  # stay signed in 30 days
-                oc.touch_session(uid, pwd)
-                ss.screen = "home"
+        c1, c2, c3 = st.columns([1, 3, 1])
+        with c2:
+            # A form submits on Enter from any field — so typing email + password
+            # and hitting Enter (or tapping دخول) logs in directly, with no
+            # separate "press Enter to apply" step per field.
+            with st.form("login_form", clear_on_submit=False, border=False):
+                email = st.text_input(t("email"), key="login_email")
+                pwd = st.text_input(t("password"), type="password", key="login_pwd")
+                submitted = st.form_submit_button(t("signin"), use_container_width=True, type="primary")
+            if submitted:
+                uid, info = oc.authenticate(email, pwd)
+                if uid:
+                    ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email.strip()
+                    ss.pending_cookie_save = (email.strip(), pwd)  # stay signed in 30 days
+                    oc.touch_session(uid, pwd)
+                    ss.screen = "home"
+                    st.rerun()
+                else:
+                    st.error(t("invalid"))
+            lang_label = "English" if ss.lang == "ar" else "العربية"
+            if st.button(f"🌐 {lang_label}", use_container_width=True):
+                ss.lang = "en" if ss.lang == "ar" else "ar"
                 st.rerun()
-            else:
-                st.error(t("invalid"))
-        lang_label = "English" if ss.lang == "ar" else "العربية"
-        if st.button(f"🌐 {lang_label}", use_container_width=True):
-            ss.lang = "en" if ss.lang == "ar" else "ar"
-            st.rerun()
 
 # ── HEADER ───────────────────────────────────────────────────
 def header():
