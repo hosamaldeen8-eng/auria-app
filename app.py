@@ -929,7 +929,10 @@ def production_screen():
                 st.markdown(comp_html, unsafe_allow_html=True)
                 if bom["operations"]:
                     st.caption("العمليات: " + " · ".join(o["name"] for o in bom["operations"]))
-            qty = st.number_input("الكمية المطلوبة", min_value=1.0, value=float(chosen["batch"]), step=1.0, key="mo_qty")
+            _mo_default = float(chosen["batch"])
+            _mo_val = st.number_input("الكمية المطلوبة", min_value=1.0, value=None, step=1.0,
+                                      key="mo_qty", placeholder=f"{_mo_default:g}")
+            qty = _mo_val or _mo_default
             if st.button("إنشاء الأمر", type="primary", key="mo_create"):
                 mo_id = oc.create_mo_from_bom(uid, pwd, chosen["tmpl_id"], qty)
                 if mo_id:
@@ -1036,9 +1039,11 @@ def production_screen():
             pi = st.selectbox("المنتج", range(len(pnames)),
                               format_func=lambda i: pnames[i], key="tr_prod")
             chosen = avail[pi]
-            qty = st.number_input("الكمية", min_value=0.01,
-                                  max_value=float(chosen["available"]),
-                                  value=float(chosen["available"]), key="tr_qty")
+            _tr_default = float(chosen["available"])
+            _tr_val = st.number_input("الكمية", min_value=0.01,
+                                      max_value=_tr_default, value=None,
+                                      key="tr_qty", placeholder=f"{_tr_default:g}")
+            qty = _tr_val or _tr_default
             if st.button("🔄 نفّذ التحويل", type="primary", use_container_width=True, key="tr_go"):
                 ok, msg = oc.create_transfer(uid, pwd, route_key, chosen["id"], qty)
                 _flash(ok, msg)
@@ -1349,7 +1354,9 @@ def _expenses_tab(uid, pwd):
             cat_names = [c["name"] for c in cats]
             ci = st.selectbox("الفئة", range(len(cat_names)), format_func=lambda i: cat_names[i], key="exp_cat")
             desc = st.text_input("الوصف", key="exp_desc", placeholder="مثال: فاتورة كهرباء السراج")
-            amount = st.number_input("المبلغ (د.ل)", min_value=0.0, step=5.0, key="exp_amount")
+            amount_val = st.number_input("المبلغ (د.ل)", min_value=0.0, value=None, step=5.0,
+                                         key="exp_amount", placeholder="0")
+            amount = amount_val or 0.0
             # Receipt: rear camera OR upload from the device
             photo_bytes, photo_name = _receipt_image("exp_img", "📎 الإيصال (اختياري)")
             st.caption("سيُسجَّل المصروف على حساب الشركة ويُرسل لهيثم للاعتماد")
@@ -1419,8 +1426,11 @@ def _receiving_tab(uid, pwd):
         pnames = [f"{p['name']} (متاح {p['available']:g})" for p in avail]
         pi = st.selectbox("المنتج", range(len(pnames)), format_func=lambda i: pnames[i], key="prc_prod")
         chosen = avail[pi]
-        qty = st.number_input("الكمية", min_value=0.01, max_value=float(chosen["available"]),
-                              value=float(chosen["available"]), key="prc_qty")
+        _prc_default = float(chosen["available"])
+        _prc_val = st.number_input("الكمية", min_value=0.01, max_value=_prc_default,
+                                   value=None, key="prc_qty",
+                                   placeholder=f"{_prc_default:g}")
+        qty = _prc_val or _prc_default
         if st.button("🔄 نفّذ التحويل", type="primary", use_container_width=True, key="prc_go"):
             ok, msg = oc.create_transfer(uid, pwd, route_key, chosen["id"], qty)
             _flash(ok, msg)
@@ -1788,9 +1798,10 @@ def _create_so_form(uid, pwd):
     ss.so_lines = built_lines
     if built_lines:
         # Optional order-wide discount (percentage)
-        discount_pct = st.number_input("خصم (%)", min_value=0.0, max_value=100.0,
-                                       value=0.0, step=5.0, key="so_discount",
-                                       help="خصم يُطبّق على كامل الطلب")
+        _disc_val = st.number_input("خصم (%)", min_value=0.0, max_value=100.0,
+                                    value=None, step=5.0, key="so_discount",
+                                    placeholder="0", help="خصم يُطبّق على كامل الطلب")
+        discount_pct = _disc_val or 0.0
         disc_amount = running_total * discount_pct / 100.0
         net_total = running_total - disc_amount
         if discount_pct > 0:
