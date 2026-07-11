@@ -170,12 +170,10 @@ st.markdown("""
     aspect-ratio:1/1; font-size:18px; padding:0; min-height:0; }
   div[class*="st-key-btnrow_emoji"] .stButton>button:hover {
     background:rgba(127,176,105,.20); border-color:#7FB069; transform:translateY(-2px); }
-  /* Stale-element handling: during a rerun Streamlit fades the previous
-     render's elements to partial opacity, which showed a ghosted duplicate
-     header/nav and felt glitchy. Keep them at full opacity (no ghosting) and
-     drop the transition, so content swaps cleanly instead of fading. */
-  [data-stale="true"] { opacity:1 !important; transition:none !important; }
-  [data-testid="stAppViewContainer"] * { transition:none !important; }
+  /* Keep Streamlit's default stale-element behaviour (it fades outgoing
+     content, which is the correct cue). We do NOT override opacity here —
+     forcing stale elements to full opacity made them look like real content
+     lingering into the next page, which felt worse than the fade. */
 </style>
 """, unsafe_allow_html=True)
 
@@ -2620,14 +2618,22 @@ else:
     header()
     nav()
     screen = ss.screen
-    if screen == "home":         home_screen()
-    elif screen == "production":
-        mo_detail_screen() if ss.mo_open else production_screen()
-    elif screen == "procurement":procurement_screen()
-    elif screen == "operations": operations_screen()
-    elif screen == "creative":   creative_screen()
-    elif screen == "cs":         cs_screen()
-    elif screen == "tasks":      tasks_screen()
-    elif screen == "report":     report_screen()
-    elif screen == "sales":      sales_screen()
-    elif screen == "profile":    profile_screen()
+    # Render the screen body inside a placeholder. On a screen change we empty
+    # it first, so the previous page's content disappears immediately instead of
+    # lingering on screen while the new page fetches its data.
+    _body = st.empty()
+    if ss.get("_rendered_screen") != screen:
+        _body.empty()          # clear the old page's content right away
+        ss["_rendered_screen"] = screen
+    with _body.container():
+        if screen == "home":         home_screen()
+        elif screen == "production":
+            mo_detail_screen() if ss.mo_open else production_screen()
+        elif screen == "procurement":procurement_screen()
+        elif screen == "operations": operations_screen()
+        elif screen == "creative":   creative_screen()
+        elif screen == "cs":         cs_screen()
+        elif screen == "tasks":      tasks_screen()
+        elif screen == "report":     report_screen()
+        elif screen == "sales":      sales_screen()
+        elif screen == "profile":    profile_screen()
