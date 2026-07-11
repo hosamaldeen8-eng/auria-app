@@ -13,6 +13,7 @@ import odoo_client as oc
 from pathlib import Path
 from datetime import datetime, timedelta
 import base64
+import time
 
 st.set_page_config(page_title="Auria", page_icon="🌿", layout="centered", initial_sidebar_state="collapsed")
 
@@ -492,6 +493,9 @@ if ss.get("pending_cookie_clear"):
 
 # Auto-login: if no session but a saved cookie exists, sign in silently and
 # restore the screen the user was last on.
+# `_cookie_pending` tells the router that we might still be restoring a session,
+# so it shows a quiet "restoring" state instead of flashing the login form.
+_cookie_pending = False
 if not ss.uid and not ss.get("auto_login_tried"):
     raw = None
     try:
@@ -505,6 +509,13 @@ if not ss.uid and not ss.get("auto_login_tried"):
             raw = st.context.cookies.get("auria_auth")
         except Exception:
             pass
+    if not raw:
+        # No cookie found *yet*. On the very first render the CookieManager may
+        # not have hydrated, so give it one rerun before concluding the user is
+        # genuinely logged out — this prevents the login-page flash on refresh.
+        if not ss.get("_cookie_wait_done"):
+            ss["_cookie_wait_done"] = True
+            _cookie_pending = True
     if raw:
         ss.auto_login_tried = True
         try:
@@ -2755,6 +2766,17 @@ def profile_screen():
 
 # ── ROUTER ───────────────────────────────────────────────────
 if not ss.uid:
+    if _cookie_pending:
+        # A saved session may still be loading (the cookie component hasn't
+        # hydrated on this first paint). Show a quiet branded screen rather than
+        # flashing the login form, and rerun once the cookie is available.
+        st.markdown(
+            f"<div style='text-align:center;padding:120px 0'>"
+            f"<img src='data:image/png;base64,{EMBLEM_SM}' width='64' "
+            f"style='border-radius:50%;opacity:.85'/></div>",
+            unsafe_allow_html=True)
+        time.sleep(0.35)   # give the cookie component a moment to hydrate
+        st.rerun()
     login_screen()
     st.stop()  # terminal: never let any logged-in UI render in the same run
 else:
