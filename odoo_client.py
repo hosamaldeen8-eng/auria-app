@@ -1214,6 +1214,54 @@ def attach_po_photo(uid, pwd, po_id, photo_bytes, photo_name="po_document.jpg"):
         return False, _clean_odoo_error(e)
 
 
+def get_expense_attachments(uid, pwd, expense_id):
+    """Receipts attached to an expense."""
+    atts = odoo(uid, pwd, "ir.attachment", "search_read",
+        [[["res_model", "=", "hr.expense"], ["res_id", "=", expense_id]]],
+        {"fields": ["id", "name", "create_date", "mimetype"], "order": "id desc"})
+    return [{
+        "id": a["id"], "name": a["name"],
+        "date": (a.get("create_date") or "")[:10],
+        "mimetype": a.get("mimetype") or "",
+    } for a in atts]
+
+
+def attach_expense_receipt(uid, pwd, expense_id, photo_bytes, photo_name="receipt.jpg",
+                           replace=False):
+    """Attach a receipt to an expense. If replace=True, existing receipts are
+    removed first. Returns (ok, msg)."""
+    try:
+        import base64 as _b64
+        if replace:
+            old = odoo(uid, pwd, "ir.attachment", "search",
+                [[["res_model", "=", "hr.expense"], ["res_id", "=", expense_id]]])
+            if old:
+                odoo(uid, pwd, "ir.attachment", "unlink", [old])
+        n = (photo_name or "").lower()
+        mt = ("application/pdf" if n.endswith(".pdf")
+              else "image/png" if n.endswith(".png")
+              else "image/jpeg")
+        odoo(uid, pwd, "ir.attachment", "create", [{
+            "name": photo_name,
+            "res_model": "hr.expense",
+            "res_id": expense_id,
+            "datas": _b64.b64encode(photo_bytes).decode(),
+            "mimetype": mt,
+        }])
+        return True, ("تم استبدال الإيصال ✓" if replace else "تم إرفاق الإيصال ✓")
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def delete_expense_receipt(uid, pwd, attachment_id):
+    """Remove a receipt attachment. Returns (ok, msg)."""
+    try:
+        odoo(uid, pwd, "ir.attachment", "unlink", [[attachment_id]])
+        return True, "تم حذف الإيصال ✓"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
 def get_po_attachments(uid, pwd, po_id):
     """List document attachments on a PO."""
     atts = odoo(uid, pwd, "ir.attachment", "search_read",

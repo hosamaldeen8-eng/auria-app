@@ -1406,6 +1406,28 @@ def _expenses_tab(uid, pwd):
                     new_amt = ec2.number_input("المبلغ", min_value=0.0, value=None,
                         step=5.0, key=f"exp_a_{eid}", placeholder=f"{e['amount']:g}")
                 new_desc = st.text_input("الوصف", value=e["name"], key=f"exp_d_{eid}")
+
+                # ── Receipt: show existing, allow replace / add / remove ──
+                atts = oc.get_expense_attachments(uid, pwd, eid)
+                if atts:
+                    st.caption("الإيصال الحالي")
+                    for a in atts:
+                        rc1, rc2 = st.columns([4, 1])
+                        rc1.markdown(
+                            f"<div class='task-row' style='padding:6px 12px;font-size:12px'>"
+                            f"📄 {a['name']} <span style='opacity:.5'>· {a['date']}</span></div>",
+                            unsafe_allow_html=True)
+                        if rc2.button("🗑️", key=f"exp_ratt_{a['id']}", use_container_width=True):
+                            ok, msg = oc.delete_expense_receipt(uid, pwd, a["id"])
+                            _flash(ok, msg)
+                            if ok: st.rerun()
+                else:
+                    st.caption("لا يوجد إيصال مرفق")
+
+                new_receipt, new_receipt_name = _receipt_image(
+                    f"exp_rimg_{eid}",
+                    "📎 استبدال / إضافة إيصال" if atts else "📎 إرفاق إيصال")
+
                 sc1, sc2 = st.columns(2)
                 if sc1.button("💾 حفظ", key=f"exp_sv_{eid}", use_container_width=True, type="primary"):
                     ok, msg = oc.update_expense(
@@ -1413,6 +1435,14 @@ def _expenses_tab(uid, pwd):
                         category_id=cats_all[new_cat]["id"],
                         description=new_desc,
                         amount=new_amt if new_amt is not None else e["amount"])
+                    # Attach/replace the receipt if a new one was provided
+                    if ok and new_receipt:
+                        okr, msgr = oc.attach_expense_receipt(
+                            uid, pwd, eid, new_receipt,
+                            new_receipt_name or "receipt.jpg",
+                            replace=bool(atts))
+                        if not okr:
+                            st.warning(msgr)
                     _flash(ok, msg)
                     if ok:
                         ss[f"exp_edit_{eid}"] = False; st.rerun()
