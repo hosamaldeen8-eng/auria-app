@@ -498,24 +498,34 @@ if ss.get("pending_cookie_clear"):
 _cookie_pending = False
 if not ss.uid and not ss.get("auto_login_tried"):
     raw = None
+    # 1) Native request cookies (available immediately on a page load)
     try:
-        raw = cookies.get("auria_auth")
+        raw = st.context.cookies.get("auria_auth")
     except Exception:
         pass
+    # 2) The component (authoritative, but needs a render cycle to hydrate)
     if not raw:
-        # Fallback to Streamlit's native cookie read (covers first paint before
-        # the component has hydrated).
         try:
-            raw = st.context.cookies.get("auria_auth")
+            raw = cookies.get("auria_auth")
         except Exception:
             pass
     if not raw:
-        # No cookie found *yet*. On the very first render the CookieManager may
-        # not have hydrated, so give it one rerun before concluding the user is
-        # genuinely logged out — this prevents the login-page flash on refresh.
-        if not ss.get("_cookie_wait_done"):
-            ss["_cookie_wait_done"] = True
+        # Has the CookieManager actually reported yet? get_all() returns {} until
+        # it has hydrated. Keep showing the restoring screen (not the login form)
+        # until it reports, bounded so we can't spin forever.
+        hydrated = False
+        try:
+            allc = cookies.get_all()
+            hydrated = isinstance(allc, dict) and len(allc) > 0
+        except Exception:
+            hydrated = False
+        tries = ss.get("_cookie_tries", 0)
+        if not hydrated and tries < 6:
+            ss["_cookie_tries"] = tries + 1
             _cookie_pending = True
+        else:
+            # Genuinely no saved session — fall through to the login screen.
+            ss.auto_login_tried = True
     if raw:
         ss.auto_login_tried = True
         try:
