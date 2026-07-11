@@ -480,11 +480,13 @@ def clear_login_cookie():
     except Exception:
         pass
 
-# Save/refresh the cookie whenever the logged-in screen changes, so a refresh
+# Save/refresh the cookie at TOP LEVEL (never inside a form/submit branch —
+# cookies.set() renders a component and won't execute there). Fires right after
+# login (_cookie_needs_save) and whenever the screen changes, so a refresh
 # restores both the session and the page you were on.
 if ss.uid and ss.get("email") and ss.get("pwd"):
     _now_screen = ss.get("screen", "home")
-    if ss.get("_cookie_screen_saved") != _now_screen:
+    if ss.pop("_cookie_needs_save", False) or ss.get("_cookie_screen_saved") != _now_screen:
         ss["_cookie_screen_saved"] = _now_screen
         try:
             save_login_cookie(ss.email, ss.pwd, _now_screen)
@@ -544,12 +546,11 @@ def login_screen():
             if uid:
                 ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email.strip()
                 ss.screen = "home"
-                # Persist the session for 30 days (real cookie component)
-                try:
-                    save_login_cookie(email.strip(), pwd, "home")
-                    ss["_cookie_screen_saved"] = "home"
-                except Exception:
-                    pass
+                # Do NOT write the cookie here: cookies.set() renders a component,
+                # and calling it inside this submit branch (then immediately
+                # rerunning) prevents it executing and can wedge the login. Flag it
+                # instead — the top-level block writes it on the next clean run.
+                ss["_cookie_needs_save"] = True
                 oc.touch_session(uid, pwd)
                 st.rerun()
             else:
