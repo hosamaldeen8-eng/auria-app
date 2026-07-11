@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 29
+CLIENT_VERSION = 30
 import xmlrpc.client
 import threading
 from datetime import date
@@ -547,28 +547,67 @@ def get_my_expenses(uid, pwd):
 
 
 def create_expense(uid, pwd, category_id, description, amount, photo_bytes=None, photo_name="receipt.jpg"):
-    """Create an expense; optionally attach a receipt photo. Returns (ok, msg)."""
+    """Create a COMPANY-PAID expense, wrap it in an expense report (sheet), and
+    submit it to the expense manager (Haitem) for approval.
+
+    After this, the only steps left for the manager in Odoo are:
+      Approve → Post Journal Entry → Register Payment.
+    Returns (ok, msg)."""
     emp = get_my_employee(uid, pwd)
     if not emp:
         return False, "لا يوجد ملف موظف مرتبط بحسابك"
     try:
+        # 1. The expense line — paid by the COMPANY (not employee reimbursement)
         exp_id = odoo(uid, pwd, "hr.expense", "create", [{
             "name": description,
             "product_id": category_id,
             "total_amount_currency": float(amount),
             "quantity": 1.0,
             "employee_id": emp["id"],
+            "payment_mode": "company_account",   # Paid By = Company
         }])
+
+        # 2. Attach the receipt image, if provided
         if photo_bytes:
             import base64 as _b64
+            _n = (photo_name or "").lower()
+            mt = ("application/pdf" if _n.endswith(".pdf")
+                  else "image/png" if _n.endswith(".png") else "image/jpeg")
             odoo(uid, pwd, "ir.attachment", "create", [{
                 "name": photo_name,
                 "res_model": "hr.expense",
                 "res_id": exp_id,
                 "datas": _b64.b64encode(photo_bytes).decode(),
-                "mimetype": "image/jpeg",
+                "mimetype": mt,
             }])
-        return True, "تم تسجيل المصروف ✓"
+
+        # 3. Create the expense report (sheet) holding this expense
+        sheet_id = odoo(uid, pwd, "hr.expense.sheet", "create", [{
+            "name": description,
+            "employee_id": emp["id"],
+            "expense_line_ids": [(6, 0, [exp_id])],
+            "payment_mode": "company_account",
+        }])
+
+        # 4. Submit the report to the manager for approval
+        submitted = False
+        try:
+            odoo(uid, pwd, "hr.expense.sheet", "action_submit_sheet", [[sheet_id]])
+            submitted = True
+        except Exception as e:
+            if "cannot marshal None" in str(e):
+                submitted = True
+            else:
+                # Fall back to setting the state directly
+                try:
+                    odoo(uid, pwd, "hr.expense.sheet", "write", [[sheet_id], {"state": "submit"}])
+                    submitted = True
+                except Exception:
+                    pass
+
+        if submitted:
+            return True, "تم تسجيل المصروف وإرساله للاعتماد ✓"
+        return True, "تم تسجيل المصروف (لم يُرسل للاعتماد — أرسله من أودو)"
     except Exception as e:
         return False, _clean_odoo_error(e)
 
@@ -1046,17 +1085,21 @@ def get_purchasable_products(uid, pwd):
 
 
 def attach_po_photo(uid, pwd, po_id, photo_bytes, photo_name="po_document.jpg"):
-    """Attach a receipt/invoice photo to a purchase order. Returns (ok, msg)."""
+    """Attach a document (image or PDF) to a purchase order. Returns (ok, msg)."""
     try:
         import base64 as _b64
+        n = (photo_name or "").lower()
+        mt = ("application/pdf" if n.endswith(".pdf")
+              else "image/png" if n.endswith(".png")
+              else "image/jpeg")
         odoo(uid, pwd, "ir.attachment", "create", [{
             "name": photo_name,
             "res_model": "purchase.order",
             "res_id": po_id,
             "datas": _b64.b64encode(photo_bytes).decode(),
-            "mimetype": "image/jpeg",
+            "mimetype": mt,
         }])
-        return True, "تم إرفاق الصورة ✓"
+        return True, "تم إرفاق المستند ✓"
     except Exception as e:
         return False, _clean_odoo_error(e)
 

@@ -243,7 +243,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 29
+APP_EXPECTS_CLIENT = 30
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -392,6 +392,23 @@ def _glow_tab_with_count():
     })();
     </script>
     """, height=0)
+
+
+def _receipt_image(key, label="📸 صوّر الإيصال"):
+    """Receipt/document image: capture with the rear camera OR upload from the
+    device (gallery/files). Returns (bytes, filename) or (None, None)."""
+    mode = st.radio(
+        label, ["📷 كاميرا", "📁 من الجهاز"],
+        key=f"{key}_mode", horizontal=True, label_visibility="visible")
+    if mode == "📷 كاميرا":
+        photo = _rear_camera(f"{key}_cam", "")
+        return (photo, "receipt.jpg") if photo else (None, None)
+    up = st.file_uploader(
+        "اختر صورة أو ملف", type=["png", "jpg", "jpeg", "pdf"],
+        key=f"{key}_up", label_visibility="collapsed")
+    if up is not None:
+        return up.getvalue(), up.name
+    return None, None
 
 
 def _rear_camera(key, label="📸 صوّر الإيصال"):
@@ -1264,14 +1281,15 @@ def _po_detail(uid, pwd, po_id):
         if atts:
             for a in atts:
                 st.markdown(f"<div class='task-row' style='display:flex;justify-content:space-between;padding:6px 12px'><span>📄 {a['name']}</span><span style='opacity:.5;font-size:11px'>{a['date']}</span></div>", unsafe_allow_html=True)
-        po_photo = _rear_camera("po_cam", "📸 صوّر المستند")
-        if st.button("إرفاق الصورة", key="po_attach", use_container_width=True):
+        po_photo, po_photo_name = _receipt_image("po_img", "📎 المستند")
+        if st.button("إرفاق الملف", key="po_attach", use_container_width=True):
             if po_photo:
-                ok, msg = oc.attach_po_photo(uid, pwd, po_id, po_photo)
+                ok, msg = oc.attach_po_photo(uid, pwd, po_id, po_photo,
+                                             po_photo_name or "document.jpg")
                 _flash(ok, msg)
                 if ok: st.rerun()
             else:
-                st.error("التقط صورة أولاً")
+                st.error("اختر صورة أو التقطها أولاً")
 
     st.markdown("**المنتجات**")
     for l in d["lines"]:
@@ -1332,13 +1350,15 @@ def _expenses_tab(uid, pwd):
             ci = st.selectbox("الفئة", range(len(cat_names)), format_func=lambda i: cat_names[i], key="exp_cat")
             desc = st.text_input("الوصف", key="exp_desc", placeholder="مثال: فاتورة كهرباء السراج")
             amount = st.number_input("المبلغ (د.ل)", min_value=0.0, step=5.0, key="exp_amount")
-            # Receipt capture — defaults to the rear camera
-            photo_bytes = _rear_camera("exp_cam", "📸 صوّر الإيصال (اختياري)")
+            # Receipt: rear camera OR upload from the device
+            photo_bytes, photo_name = _receipt_image("exp_img", "📎 الإيصال (اختياري)")
+            st.caption("سيُسجَّل المصروف على حساب الشركة ويُرسل لهيثم للاعتماد")
             if st.button("حفظ المصروف", type="primary", use_container_width=True, key="exp_save"):
                 if not desc.strip() or amount <= 0:
                     st.error("أدخل الوصف والمبلغ")
                 else:
-                    ok, msg = oc.create_expense(uid, pwd, cats[ci]["id"], desc, amount, photo_bytes)
+                    ok, msg = oc.create_expense(uid, pwd, cats[ci]["id"], desc, amount,
+                                                photo_bytes, photo_name or "receipt.jpg")
                     if ok:
                         st.success(msg); st.rerun()
                     else:
