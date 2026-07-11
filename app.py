@@ -464,10 +464,14 @@ def _rear_camera(key, label="📸 صوّر الإيصال"):
 cookies = stx.CookieManager(key="auria_cookies")
 
 def save_login_cookie(email, pwd, screen="home"):
-    """Persist the session for 30 days (email|pwd|screen)."""
+    """Persist the session for 30 days (email|pwd|screen).
+    same_site='lax' matters: the component defaults to 'strict', which stops the
+    cookie being sent on some navigations — and we READ it via
+    st.context.cookies (the HTTP request cookies), which needs it sent."""
     token = base64.b64encode(f"{email}|{pwd}|{screen}".encode()).decode()
     cookies.set("auria_auth", token,
                 expires_at=datetime.now() + timedelta(days=30),
+                same_site="lax", path="/",
                 key="set_auria_auth")
 
 def clear_login_cookie():
@@ -491,43 +495,20 @@ if ss.get("pending_cookie_clear"):
     ss.pop("pending_cookie_clear")
     clear_login_cookie()
 
-# Auto-login: if no session but a saved cookie exists, sign in silently and
-# restore the screen the user was last on.
-# `_cookie_pending` tells the router that we might still be restoring a session,
-# so it shows a quiet "restoring" state instead of flashing the login form.
-_cookie_pending = False
+# Auto-login: read the cookie from the HTTP request itself (st.context.cookies).
+# This is available on the FIRST script run, before anything renders — unlike
+# the CookieManager component, which returns {} on its first run by design
+# (components only return real data after a frontend round-trip). Waiting for
+# the component was the cause of the login-page flash; reading the request
+# cookie directly removes it entirely.
 if not ss.uid and not ss.get("auto_login_tried"):
+    ss.auto_login_tried = True
     raw = None
-    # 1) Native request cookies (available immediately on a page load)
     try:
         raw = st.context.cookies.get("auria_auth")
     except Exception:
         pass
-    # 2) The component (authoritative, but needs a render cycle to hydrate)
-    if not raw:
-        try:
-            raw = cookies.get("auria_auth")
-        except Exception:
-            pass
-    if not raw:
-        # Has the CookieManager actually reported yet? get_all() returns {} until
-        # it has hydrated. Keep showing the restoring screen (not the login form)
-        # until it reports, bounded so we can't spin forever.
-        hydrated = False
-        try:
-            allc = cookies.get_all()
-            hydrated = isinstance(allc, dict) and len(allc) > 0
-        except Exception:
-            hydrated = False
-        tries = ss.get("_cookie_tries", 0)
-        if not hydrated and tries < 6:
-            ss["_cookie_tries"] = tries + 1
-            _cookie_pending = True
-        else:
-            # Genuinely no saved session — fall through to the login screen.
-            ss.auto_login_tried = True
     if raw:
-        ss.auto_login_tried = True
         try:
             parts = base64.b64decode(raw.encode()).decode().split("|")
             email, pwd = parts[0], parts[1]
@@ -2776,17 +2757,6 @@ def profile_screen():
 
 # ── ROUTER ───────────────────────────────────────────────────
 if not ss.uid:
-    if _cookie_pending:
-        # A saved session may still be loading (the cookie component hasn't
-        # hydrated on this first paint). Show a quiet branded screen rather than
-        # flashing the login form, and rerun once the cookie is available.
-        st.markdown(
-            f"<div style='text-align:center;padding:120px 0'>"
-            f"<img src='data:image/png;base64,{EMBLEM_SM}' width='64' "
-            f"style='border-radius:50%;opacity:.85'/></div>",
-            unsafe_allow_html=True)
-        time.sleep(0.35)   # give the cookie component a moment to hydrate
-        st.rerun()
     login_screen()
     st.stop()  # terminal: never let any logged-in UI render in the same run
 else:
