@@ -243,7 +243,7 @@ ss = st.session_state
 # cached odoo_client that predates the app.py we're serving, every new
 # function call would crash. Instead we detect the mismatch once, here,
 # and show a calm reload notice — no screen ever hits an AttributeError.
-APP_EXPECTS_CLIENT = 30
+APP_EXPECTS_CLIENT = 31
 if getattr(oc, "CLIENT_VERSION", 0) < APP_EXPECTS_CLIENT:
     st.warning("⏳ التطبيق يُحدَّث الآن. أعِد تحميل الصفحة بعد لحظات "
                "(أو Manage app ← Reboot).")
@@ -1375,6 +1375,7 @@ def _expenses_tab(uid, pwd):
     exps = oc.get_my_expenses(uid, pwd)
     if not exps:
         st.caption("لا توجد مصروفات")
+    cats_all = oc.get_expense_categories(uid, pwd)
     for e in exps:
         st_col = {"مدفوع": "#7FB069", "معتمد": "#7FB069", "مرفوض": "#E07070",
                   "قيد المراجعة": "#D4A853"}.get(e["state"], "#9BA58F")
@@ -1387,6 +1388,52 @@ def _expenses_tab(uid, pwd):
               <span style='color:{st_col};float:left'>{e['state']}</span>
             </div>
         </div>""", unsafe_allow_html=True)
+
+        eid = e["id"]
+        if e["paid"]:
+            # Paid — locked. Editing would contradict a completed payment.
+            st.caption("🔒 مدفوع — لا يمكن التعديل")
+        elif e["editable"]:
+            # Not yet approved → free to edit or delete
+            if ss.get(f"exp_edit_{eid}"):
+                with st.container(key=f"btnrow_expedit_{eid}"):
+                    cat_names = [c["name"] for c in cats_all]
+                    cur_i = next((i for i, c in enumerate(cats_all)
+                                  if c["id"] == e.get("category_id")), 0)
+                    ec1, ec2 = st.columns([2, 1])
+                    new_cat = ec1.selectbox("الفئة", range(len(cat_names)), index=cur_i,
+                        format_func=lambda i: cat_names[i], key=f"exp_c_{eid}")
+                    new_amt = ec2.number_input("المبلغ", min_value=0.0, value=None,
+                        step=5.0, key=f"exp_a_{eid}", placeholder=f"{e['amount']:g}")
+                new_desc = st.text_input("الوصف", value=e["name"], key=f"exp_d_{eid}")
+                sc1, sc2 = st.columns(2)
+                if sc1.button("💾 حفظ", key=f"exp_sv_{eid}", use_container_width=True, type="primary"):
+                    ok, msg = oc.update_expense(
+                        uid, pwd, eid,
+                        category_id=cats_all[new_cat]["id"],
+                        description=new_desc,
+                        amount=new_amt if new_amt is not None else e["amount"])
+                    _flash(ok, msg)
+                    if ok:
+                        ss[f"exp_edit_{eid}"] = False; st.rerun()
+                if sc2.button("إلغاء", key=f"exp_cx_{eid}", use_container_width=True):
+                    ss[f"exp_edit_{eid}"] = False; st.rerun()
+            else:
+                ac1, ac2 = st.columns(2)
+                if ac1.button("✏️ تعديل", key=f"exp_ed_{eid}", use_container_width=True):
+                    ss[f"exp_edit_{eid}"] = True; st.rerun()
+                if ac2.button("🗑️ حذف", key=f"exp_dl_{eid}", use_container_width=True):
+                    ok, msg = oc.delete_expense(uid, pwd, eid)
+                    _flash(ok, msg)
+                    if ok: st.rerun()
+        elif e["withdrawable"]:
+            # Approved but not paid — withdraw first (manager must re-approve)
+            st.caption("معتمد — اسحبه لتتمكن من التعديل (سيحتاج اعتماداً جديداً)")
+            if st.button("↩️ سحب للتعديل", key=f"exp_wd_{eid}", use_container_width=True):
+                ok, msg = oc.withdraw_expense(uid, pwd, eid)
+                _flash(ok, msg)
+                if ok: st.rerun()
+        st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
 
 
 def _receiving_tab(uid, pwd):

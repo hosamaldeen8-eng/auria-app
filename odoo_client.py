@@ -5,7 +5,7 @@ so every action respects Odoo's permissions and audit log.
 """
 
 # Bump this whenever app.py depends on a new function here.
-CLIENT_VERSION = 30
+CLIENT_VERSION = 31
 import xmlrpc.client
 import threading
 from datetime import date
@@ -528,22 +528,132 @@ def get_my_employee(uid, pwd):
 
 
 def get_my_expenses(uid, pwd):
-    """This user's recent expenses."""
+    """This user's recent expenses, with edit-ability info."""
     emp = get_my_employee(uid, pwd)
     if not emp:
         return []
     exps = odoo(uid, pwd, "hr.expense", "search_read",
         [[["employee_id", "=", emp["id"]]]],
-        {"fields": ["name", "total_amount", "state", "date", "product_id"],
+        {"fields": ["id", "name", "total_amount", "state", "date", "product_id", "sheet_id"],
          "limit": 20, "order": "date desc"})
+    # Sheet states tell us where it is in the approval chain
+    sheet_ids = [e["sheet_id"][0] for e in exps if e.get("sheet_id")]
+    sheets = {}
+    if sheet_ids:
+        for s in odoo(uid, pwd, "hr.expense.sheet", "read", [sheet_ids],
+                      {"fields": ["state", "payment_state"]}):
+            sheets[s["id"]] = s
     ST = {"draft": "مسودة", "reported": "مُقدّم", "submitted": "قيد المراجعة",
           "approved": "معتمد", "done": "مدفوع", "refused": "مرفوض"}
-    return [{
-        "name": e["name"], "amount": e["total_amount"],
-        "state": ST.get(e["state"], e["state"]),
-        "date": (e.get("date") or "")[:10],
-        "category": e["product_id"][1] if e.get("product_id") else "—",
-    } for e in exps]
+    out = []
+    for e in exps:
+        sid = e["sheet_id"][0] if e.get("sheet_id") else None
+        sh = sheets.get(sid, {})
+        sstate = sh.get("state")            # draft/submit/approve/post/done/cancel
+        paid = sh.get("payment_state") == "paid"
+        # Freely editable before the manager approves it.
+        editable = (not paid) and (sstate in (None, "draft", "submit"))
+        # Approved but not yet paid — can be withdrawn to draft, then edited.
+        withdrawable = (not paid) and sstate == "approve"
+        out.append({
+            "id": e["id"], "sheet_id": sid,
+            "name": e["name"], "amount": e["total_amount"],
+            "state": ST.get(e["state"], e["state"]),
+            "sheet_state": sstate, "paid": paid,
+            "editable": editable, "withdrawable": withdrawable,
+            "date": (e.get("date") or "")[:10],
+            "category": e["product_id"][1] if e.get("product_id") else "—",
+            "category_id": e["product_id"][0] if e.get("product_id") else None,
+        })
+    return out
+
+
+def update_expense(uid, pwd, expense_id, category_id=None, description=None, amount=None):
+    """Edit an expense that hasn't been approved/paid yet. Returns (ok, msg)."""
+    try:
+        exp = odoo(uid, pwd, "hr.expense", "read", [[expense_id]],
+                   {"fields": ["sheet_id", "state"]})
+        if not exp:
+            return False, "المصروف غير موجود"
+        sid = exp[0]["sheet_id"][0] if exp[0].get("sheet_id") else None
+        if sid:
+            sh = odoo(uid, pwd, "hr.expense.sheet", "read", [[sid]],
+                      {"fields": ["state", "payment_state"]})[0]
+            if sh.get("payment_state") == "paid":
+                return False, "لا يمكن التعديل — المصروف مدفوع"
+            if sh.get("state") not in ("draft", "submit"):
+                return False, "لا يمكن التعديل — تم اعتماده. اسحبه أولاً"
+            # A submitted sheet must go back to draft before its lines can change
+            if sh.get("state") == "submit":
+                try:
+                    odoo(uid, pwd, "hr.expense.sheet", "action_reset_expense_sheets", [[sid]])
+                except Exception as e:
+                    if "cannot marshal None" not in str(e):
+                        odoo(uid, pwd, "hr.expense.sheet", "write", [[sid], {"state": "draft"}])
+        vals = {}
+        if description:
+            vals["name"] = description
+        if category_id:
+            vals["product_id"] = category_id
+        if amount is not None:
+            vals["total_amount_currency"] = float(amount)
+        if vals:
+            odoo(uid, pwd, "hr.expense", "write", [[expense_id], vals])
+        # Re-submit so it goes back to the manager for approval
+        if sid:
+            if description:
+                odoo(uid, pwd, "hr.expense.sheet", "write", [[sid], {"name": description}])
+            try:
+                odoo(uid, pwd, "hr.expense.sheet", "action_submit_sheet", [[sid]])
+            except Exception as e:
+                if "cannot marshal None" not in str(e):
+                    odoo(uid, pwd, "hr.expense.sheet", "write", [[sid], {"state": "submit"}])
+        return True, "تم تعديل المصروف وإعادة إرساله للاعتماد ✓"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def withdraw_expense(uid, pwd, expense_id):
+    """Pull an approved-but-unpaid expense back to draft so it can be edited.
+    (Re-approval by the manager is then required.) Returns (ok, msg)."""
+    try:
+        exp = odoo(uid, pwd, "hr.expense", "read", [[expense_id]], {"fields": ["sheet_id"]})
+        sid = exp[0]["sheet_id"][0] if exp and exp[0].get("sheet_id") else None
+        if not sid:
+            return False, "لا يوجد تقرير مرتبط"
+        sh = odoo(uid, pwd, "hr.expense.sheet", "read", [[sid]],
+                  {"fields": ["state", "payment_state"]})[0]
+        if sh.get("payment_state") == "paid":
+            return False, "لا يمكن السحب — المصروف مدفوع"
+        try:
+            odoo(uid, pwd, "hr.expense.sheet", "action_reset_expense_sheets", [[sid]])
+        except Exception as e:
+            if "cannot marshal None" not in str(e):
+                odoo(uid, pwd, "hr.expense.sheet", "write", [[sid], {"state": "draft"}])
+        return True, "تم سحب المصروف — يمكنك تعديله الآن"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
+
+
+def delete_expense(uid, pwd, expense_id):
+    """Delete an unpaid, unapproved expense (and its sheet). Returns (ok, msg)."""
+    try:
+        exp = odoo(uid, pwd, "hr.expense", "read", [[expense_id]], {"fields": ["sheet_id"]})
+        sid = exp[0]["sheet_id"][0] if exp and exp[0].get("sheet_id") else None
+        if sid:
+            sh = odoo(uid, pwd, "hr.expense.sheet", "read", [[sid]],
+                      {"fields": ["state", "payment_state"]})[0]
+            if sh.get("payment_state") == "paid" or sh.get("state") in ("post", "done"):
+                return False, "لا يمكن الحذف — المصروف مدفوع أو مُرحَّل"
+            try:
+                odoo(uid, pwd, "hr.expense.sheet", "action_reset_expense_sheets", [[sid]])
+            except Exception:
+                pass
+            odoo(uid, pwd, "hr.expense.sheet", "unlink", [[sid]])
+        odoo(uid, pwd, "hr.expense", "unlink", [[expense_id]])
+        return True, "تم حذف المصروف ✓"
+    except Exception as e:
+        return False, _clean_odoo_error(e)
 
 
 def create_expense(uid, pwd, category_id, description, amount, photo_bytes=None, photo_name="receipt.jpg"):
