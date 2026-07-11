@@ -309,12 +309,48 @@ def _cached_zones(uid, pwd, query):
 def _cached_subzones(uid, pwd, zone_id):
     return oc.get_accurate_subzones(uid, pwd, zone_id)
 
+# ── Performance caches (profiled: these were the slowest calls) ──
+# Dept KPIs were the worst offender on the home page (~2.2s production,
+# ~1.3s operations) — they're record counts that don't need to be live to the
+# second. 90s TTL keeps them fresh while making navigation feel instant.
+@st.cache_data(ttl=90, show_spinner=False)
+def _cached_dept_kpis(uid, pwd, dept):
+    return oc.get_dept_kpis(uid, pwd, dept)
+
+@st.cache_data(ttl=90, show_spinner=False)
+def _cached_my_performance(uid, pwd):
+    return oc.get_my_performance(uid, pwd)
+
+# Reference data — barely changes, so cache it longer.
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_purchasable_products(uid, pwd):
+    return oc.get_purchasable_products(uid, pwd)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_suppliers(uid, pwd):
+    return oc.get_suppliers(uid, pwd)
+
+
+def _invalidate_caches():
+    """Clear the KPI/performance caches after a write, so numbers update
+    immediately instead of waiting out the TTL. Reference-data caches
+    (products/suppliers/zones) are left alone — they rarely change and are
+    cheap to keep."""
+    try:
+        _cached_dept_kpis.clear()
+        _cached_my_performance.clear()
+    except Exception:
+        pass
+
 
 def _flash(ok, msg):
     """Safely show a success/error toast. Coerces msg to a plain string so
-    Streamlit never tries to introspect a non-string as a variable."""
+    Streamlit never tries to introspect a non-string as a variable.
+    A successful write also clears the KPI/performance caches so the numbers
+    reflect the change immediately."""
     text = str(msg) if msg is not None else ("تم ✓" if ok else "حدث خطأ")
     if ok:
+        _invalidate_caches()
         st.success(text)
     else:
         st.error(text)
@@ -551,7 +587,7 @@ def home_screen():
 
     # Department KPIs
     st.markdown(f"**{t('dept_snapshot')}**")
-    kpis = oc.get_dept_kpis(uid, pwd, info["dept"])
+    kpis = _cached_dept_kpis(uid, pwd, info["dept"])
     if kpis:
         # KPI cards; "Active MOs" is tappable → opens the production MO list.
         # Sized to match the plain metric-card exactly.
@@ -581,7 +617,7 @@ def home_screen():
 
     # ── My performance (deep) ──
     st.markdown(f"**{t('my_performance')}**")
-    perf = oc.get_my_performance(uid, pwd)
+    perf = _cached_my_performance(uid, pwd)
 
     # Row 1: core numbers — tap any box to open Tasks with that filter
     core = [
@@ -1011,7 +1047,7 @@ def procurement_screen():
         # Create RFQ / PO
         with st.expander("➕ إنشاء طلب شراء جديد"):
             # ── Vendor: select existing OR create new ──
-            sups = oc.get_suppliers(uid, pwd)
+            sups = _cached_suppliers(uid, pwd)
             sup_names = ["➕ مورّد جديد"] + [s["name"] for s in sups]
             si = st.selectbox("المورّد", range(len(sup_names)),
                               format_func=lambda i: sup_names[i], key="rfq_sup")
@@ -1032,7 +1068,7 @@ def procurement_screen():
                 supplier_id = sups[si - 1]["id"]
 
             # ── Product lines — sales-order style: inline rows, live cost ──
-            prods = oc.get_purchasable_products(uid, pwd)
+            prods = _cached_purchasable_products(uid, pwd)
             pnames = [f"{p['code']+' ' if p['code'] else ''}{p['name']}" for p in prods]
             ss.setdefault("po_rowcount", 3)
             ss.setdefault("po_rows", {})
