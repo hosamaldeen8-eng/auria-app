@@ -8,6 +8,7 @@
 """
 import streamlit as st
 import streamlit.components.v1 as components
+import extra_streamlit_components as stx
 import odoo_client as oc
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -422,36 +423,41 @@ def _rear_camera(key, label="📸 صوّر الإيصال"):
     photo = st.camera_input(label, key=key, label_visibility="collapsed")
     return photo.getvalue() if photo else None
 
-# ── PERSISTENT LOGIN (cookies, no external component) ───────
-# Read: st.context.cookies (native Streamlit ≥1.37, reliable)
-# Write/delete: a tiny JS snippet — parent.document.cookie
+# ── PERSISTENT LOGIN (real cookie component) ────────────────
+# The previous approach wrote cookies via a components.html <script> that did
+# parent.document.cookie — but that iframe is sandboxed/cross-origin, so the
+# browser silently BLOCKED the write. The cookie was never actually saved,
+# which is why sessions never persisted. extra-streamlit-components provides a
+# real bidirectional component that can genuinely read AND write cookies.
+@st.cache_resource
+def _cookie_mgr():
+    return stx.CookieManager(key="auria_cookies")
+
+cookies = _cookie_mgr()
+
 def save_login_cookie(email, pwd, screen="home"):
-    # Store email|pwd|screen so a refresh restores the session AND the page.
+    """Persist the session for 30 days (email|pwd|screen)."""
     token = base64.b64encode(f"{email}|{pwd}|{screen}".encode()).decode()
-    components.html(
-        f"<script>parent.document.cookie = 'auria_auth={token}; "
-        f"max-age=2592000; path=/; SameSite=Lax';</script>",
-        height=0,
-    )
+    cookies.set("auria_auth", token,
+                expires_at=datetime.now() + timedelta(days=30),
+                key="set_auria_auth")
 
 def clear_login_cookie():
-    components.html(
-        "<script>parent.document.cookie = "
-        "'auria_auth=; max-age=0; path=/; SameSite=Lax';</script>",
-        height=0,
-    )
+    try:
+        cookies.delete("auria_auth", key="del_auria_auth")
+    except Exception:
+        pass
 
-# Keep the cookie's stored screen fresh on every logged-in render, so a refresh
-# lands you back on the page you were actually on (not just 'home'). This also
-# means the cookie is (re)written on normal navigation — a reliable moment,
-# unlike the single post-login write that can race the rerun.
+# Save/refresh the cookie whenever the logged-in screen changes, so a refresh
+# restores both the session and the page you were on.
 if ss.uid and ss.get("email") and ss.get("pwd"):
-    _last_saved = ss.get("_cookie_screen_saved")
     _now_screen = ss.get("screen", "home")
-    if _last_saved != _now_screen or ss.get("pending_cookie_save"):
-        ss.pop("pending_cookie_save", None)
+    if ss.get("_cookie_screen_saved") != _now_screen:
         ss["_cookie_screen_saved"] = _now_screen
-        save_login_cookie(ss.email, ss.pwd, _now_screen)
+        try:
+            save_login_cookie(ss.email, ss.pwd, _now_screen)
+        except Exception:
+            pass
 
 if ss.get("pending_cookie_clear"):
     ss.pop("pending_cookie_clear")
@@ -462,9 +468,16 @@ if ss.get("pending_cookie_clear"):
 if not ss.uid and not ss.get("auto_login_tried"):
     raw = None
     try:
-        raw = st.context.cookies.get("auria_auth")
+        raw = cookies.get("auria_auth")
     except Exception:
         pass
+    if not raw:
+        # Fallback to Streamlit's native cookie read (covers first paint before
+        # the component has hydrated).
+        try:
+            raw = st.context.cookies.get("auria_auth")
+        except Exception:
+            pass
     if raw:
         ss.auto_login_tried = True
         try:
@@ -501,9 +514,14 @@ def login_screen():
             uid, info = oc.authenticate(email, pwd)
             if uid:
                 ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email.strip()
-                ss.pending_cookie_save = (email.strip(), pwd)  # stay signed in 30 days
-                oc.touch_session(uid, pwd)
                 ss.screen = "home"
+                # Persist the session for 30 days (real cookie component)
+                try:
+                    save_login_cookie(email.strip(), pwd, "home")
+                    ss["_cookie_screen_saved"] = "home"
+                except Exception:
+                    pass
+                oc.touch_session(uid, pwd)
                 st.rerun()
             else:
                 st.error(t("invalid"))
