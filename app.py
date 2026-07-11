@@ -465,14 +465,23 @@ cookies = stx.CookieManager(key="auria_cookies")
 
 def save_login_cookie(email, pwd, screen="home"):
     """Persist the session for 30 days (email|pwd|screen).
-    same_site='lax' matters: the component defaults to 'strict', which stops the
-    cookie being sent on some navigations — and we READ it via
-    st.context.cookies (the HTTP request cookies), which needs it sent."""
+
+    Two things matter here:
+    1. A UNIQUE component key per write. Streamlit components with a fixed key
+       execute once and then replay a cached result — so a constant key meant
+       the cookie-setting JS often never ran again. The counter forces a fresh
+       component instance each time.
+    2. same_site='lax'. The component defaults to 'strict', which stops the
+       browser sending the cookie on some navigations — and we READ it from the
+       HTTP request cookies, which requires it to be sent.
+    """
     token = base64.b64encode(f"{email}|{pwd}|{screen}".encode()).decode()
+    n = ss.get("_cookie_write_n", 0) + 1
+    ss["_cookie_write_n"] = n
     cookies.set("auria_auth", token,
                 expires_at=datetime.now() + timedelta(days=30),
                 same_site="lax", path="/",
-                key="set_auria_auth")
+                key=f"set_auria_auth_{n}")
 
 def clear_login_cookie():
     try:
@@ -2743,6 +2752,31 @@ def report_screen():
 def profile_screen():
     info = ss.info
     dept_label = t(info["dept"])
+
+    # ── Session diagnostic (tells us whether the login cookie really exists) ──
+    with st.expander("🔧 حالة الجلسة (تشخيص)"):
+        _req = None
+        try:
+            _req = st.context.cookies.get("auria_auth")
+        except Exception as ex:
+            st.caption(f"request-cookie read error: {ex}")
+        _comp = None
+        try:
+            _comp = cookies.get("auria_auth")
+        except Exception:
+            pass
+        st.write({
+            "cookie in HTTP request (used for auto-login)": "✅ موجود" if _req else "❌ غير موجود",
+            "cookie via component": "✅ موجود" if _comp else "❌ غير موجود",
+            "writes attempted this session": ss.get("_cookie_write_n", 0),
+            "saved screen": ss.get("_cookie_screen_saved"),
+        })
+        if not _req and not _comp:
+            st.warning("لا يوجد كوكي محفوظ — لهذا يطلب تسجيل الدخول عند التحديث.")
+        if st.button("🔄 إعادة حفظ الكوكي الآن", key="diag_resave"):
+            save_login_cookie(ss.email, ss.pwd, ss.get("screen", "home"))
+            st.success("تم إرسال أمر الحفظ — حدّث الصفحة ثم افتح هذا القسم مجدداً")
+
     st.markdown(f"""<div class='greeting' style='text-align:center;padding:26px 18px'>
         <img src='data:image/png;base64,{EMBLEM_B64}' width='72' style='border-radius:50%;margin-bottom:10px'/>
         <div style='font-size:22px;font-weight:700'>{info['name']}</div>
