@@ -429,11 +429,10 @@ def _rear_camera(key, label="📸 صوّر الإيصال"):
 # browser silently BLOCKED the write. The cookie was never actually saved,
 # which is why sessions never persisted. extra-streamlit-components provides a
 # real bidirectional component that can genuinely read AND write cookies.
-@st.cache_resource
-def _cookie_mgr():
-    return stx.CookieManager(key="auria_cookies")
-
-cookies = _cookie_mgr()
+# CookieManager is a widget component, so it must NOT be wrapped in
+# @st.cache_resource (Streamlit forbids widget calls inside cached functions).
+# Instantiate it once per session via session_state instead.
+cookies = stx.CookieManager(key="auria_cookies")
 
 def save_login_cookie(email, pwd, screen="home"):
     """Persist the session for 30 days (email|pwd|screen)."""
