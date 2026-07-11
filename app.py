@@ -1354,41 +1354,43 @@ def _expenses_tab(uid, pwd):
         if not cats:
             st.info("لا توجد فئات مصروفات")
         else:
-            # Clearing widget state must happen BEFORE the widgets are created,
-            # so a successful save sets a flag and we wipe the keys on the next run.
-            if ss.pop("_exp_clear", False):
-                for k in ("exp_desc", "exp_amount", "exp_cat",
-                          "exp_img_mode", "exp_img_up", "exp_img_cam"):
-                    ss.pop(k, None)
-
             cat_names = [c["name"] for c in cats]
-            ci = st.selectbox("الفئة", range(len(cat_names)), format_func=lambda i: cat_names[i], key="exp_cat")
-            desc = st.text_input("الوصف", key="exp_desc", placeholder="مثال: فاتورة كهرباء السراج")
-            amount_val = st.number_input("المبلغ (د.ل)", min_value=0.0, value=None, step=5.0,
-                                         key="exp_amount", placeholder="0")
-            amount = amount_val or 0.0
-            # Receipt: rear camera OR upload from the device
-            photo_bytes, photo_name = _receipt_image("exp_img", "📎 الإيصال (اختياري)")
-            st.caption("سيُسجَّل المصروف على حساب الشركة ويُرسل لهيثم للاعتماد")
-            _saving = ss.get("_exp_saving", False)
-            if st.button("حفظ المصروف", type="primary", use_container_width=True,
-                         key="exp_save", disabled=_saving):
+            # st.form(clear_on_submit=True) is Streamlit's built-in, guaranteed
+            # way to empty a form after submission — no session-state juggling,
+            # which didn't reliably clear the widgets.
+            with st.form("new_expense_form", clear_on_submit=True, border=False):
+                ci = st.selectbox("الفئة", range(len(cat_names)),
+                                  format_func=lambda i: cat_names[i], key="exp_cat")
+                desc = st.text_input("الوصف", key="exp_desc",
+                                     placeholder="مثال: فاتورة كهرباء السراج")
+                amount_val = st.number_input("المبلغ (د.ل)", min_value=0.0, value=None,
+                                             step=5.0, key="exp_amount", placeholder="0")
+                # Receipt: a single uploader. On a phone the OS picker already
+                # offers "Take Photo" / camera, so this covers both without the
+                # in-form radio (widgets in a form can't rerun to hide/show).
+                up = st.file_uploader("📎 الإيصال (اختياري) — صورة أو ملف",
+                                      type=["png", "jpg", "jpeg", "pdf"], key="exp_up")
+                st.caption("سيُسجَّل المصروف على حساب الشركة ويُرسل لهيثم للاعتماد")
+                submitted = st.form_submit_button("حفظ المصروف", type="primary",
+                                                  use_container_width=True)
+
+            if submitted:
+                amount = amount_val or 0.0
                 if not desc.strip() or amount <= 0:
                     st.error("أدخل الوصف والمبلغ")
                 else:
-                    # Guard: ignore a repeat tap of the same expense (double-submit)
                     sig = f"{cats[ci]['id']}|{desc.strip()}|{amount}"
                     if ss.get("_exp_last_sig") == sig:
                         st.warning("هذا المصروف مُسجَّل بالفعل")
                     else:
-                        ss["_exp_saving"] = True
-                        ok, msg = oc.create_expense(uid, pwd, cats[ci]["id"], desc, amount,
-                                                    photo_bytes, photo_name or "receipt.jpg")
-                        ss["_exp_saving"] = False
+                        pb = up.getvalue() if up is not None else None
+                        pn = up.name if up is not None else "receipt.jpg"
+                        ok, msg = oc.create_expense(uid, pwd, cats[ci]["id"], desc,
+                                                    amount, pb, pn)
                         if ok:
-                            ss["_exp_last_sig"] = sig   # remember what we just filed
-                            ss["_exp_clear"] = True     # wipe the form on the next run
-                            st.success(msg); st.rerun()
+                            ss["_exp_last_sig"] = sig
+                            st.success(msg)
+                            st.rerun()
                         else:
                             st.error(msg)
 
