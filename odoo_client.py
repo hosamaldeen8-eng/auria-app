@@ -1490,7 +1490,8 @@ def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200, sort="date_a
     elif state != "all":
         domain.append(["state", "=", state])
     if query:
-        domain += ["|", ["name", "ilike", query], ["origin", "ilike", query]]
+        domain += ["|", "|", ["name", "ilike", query], ["origin", "ilike", query],
+                   ["accurate_shipment_code", "ilike", query]]
     total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
         {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id",
@@ -1597,7 +1598,7 @@ def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200, sor
         else:
             domain.append(["api_status_name", "=", api_status])
     if query:
-        domain += ["|", "|", ["name", "ilike", query],
+        domain += ["|", "|", "|", ["name", "ilike", query], ["code", "ilike", query],
                    ["recipient_name", "ilike", query], ["sale_id.name", "ilike", query]]
     order = "date desc, id desc" if sort == "date_desc" else "date asc, id asc"
     ships = odoo(uid, pwd, "accurate.shipment", "search_read", [domain],

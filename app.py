@@ -1589,7 +1589,7 @@ def operations_screen():
         f1c1, f1c2, f1c3 = st.columns([2, 2, 3])
         s1 = f1c1.selectbox("الحالة", list(S1.keys()), format_func=lambda k: S1[k], key="op_s1_f")
         o1 = f1c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s1_o")
-        q1 = f1c3.text_input(t("search"), key="op_s1_q", placeholder="رقم الطلب")
+        q1 = f1c3.text_input(t("search"), key="op_s1_q", placeholder="رقم الطلب أو الشحنة")
         sig1 = f"{s1}|{q1}|{o1}"
         if ss.get("op1_sig") != sig1:
             ss.op1_limit = 200; ss.op1_sig = sig1
@@ -1638,7 +1638,7 @@ def operations_screen():
             format_func=lambda k: "كل الشحنات" if k == "all" else ("بدون حالة" if k == "none" else k),
             key="op_s2_f")
         o2 = f2c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s2_o")
-        q2 = f2c3.text_input(t("search"), key="op_s2_q", placeholder="طلب أو اسم العميل")
+        q2 = f2c3.text_input(t("search"), key="op_s2_q", placeholder="طلب، عميل، أو رقم شحنة")
         sig2 = f"{s2}|{q2}|{o2}"
         if ss.get("op2_sig") != sig2:
             ss.op2_limit = 200; ss.op2_sig = sig2
