@@ -1619,7 +1619,9 @@ def operations_screen():
             )
             st.markdown(card, unsafe_allow_html=True)
             if st.button("عرض وتأكيد ←", key=f"op1_{p['id']}", use_container_width=True):
-                ss.op_pick_open = p["id"]; ss.op_pick_mode = "delivery"; st.rerun()
+                ss.op_pick_open = p["id"]; ss.op_pick_mode = "delivery"
+                ss.op_pick_queue = [x["id"] for x in picks if x["state"] != "done"]
+                st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         if p_total > p_shown:
             if st.button(f"⬇️ تحميل المزيد ({p_total - p_shown} متبقٍ)", key="op1_more", use_container_width=True):
@@ -1691,7 +1693,9 @@ def operations_screen():
             )
             st.markdown(card, unsafe_allow_html=True)
             if st.button("عرض واستلام ←", key=f"op3_{tr['id']}", use_container_width=True):
-                ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"; st.rerun()
+                ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"
+                ss.op_pick_queue = [x["id"] for x in trs if x["state"] != "done"]
+                st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         if t_total > t_shown:
             if st.button(f"⬇️ تحميل المزيد ({t_total - t_shown} متبقٍ)", key="op3_more", use_container_width=True):
@@ -1727,7 +1731,9 @@ def operations_screen():
             )
             st.markdown(card, unsafe_allow_html=True)
             if st.button("عرض وتأكيد الاستلام ←", key=f"op4_{rt['id']}", use_container_width=True):
-                ss.op_pick_open = rt["id"]; ss.op_pick_mode = "return"; st.rerun()
+                ss.op_pick_open = rt["id"]; ss.op_pick_mode = "return"
+                ss.op_pick_queue = [x["id"] for x in rets if x["state"] != "done"]
+                st.rerun()
             st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         if r_total > r_shown:
             if st.button(f"⬇️ تحميل المزيد ({r_total - r_shown} متبقٍ)", key="op4_more", use_container_width=True):
@@ -2223,7 +2229,20 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
     contact) or mode='receive' (internal SJ→HD transfer — no contact,
     receive action)."""
     if st.button("← رجوع"):
-        ss.op_pick_open = None; ss.op_pick_mode = None; st.rerun()
+        ss.op_pick_open = None; ss.op_pick_mode = None
+        ss.pop("op_just_validated", None)
+        st.rerun()
+
+    # Queue navigation: position of this picking among the pending orders
+    # captured from the list at open time (respects the list's sort order).
+    queue = ss.get("op_pick_queue") or []
+    nxt_id = None
+    if picking_id in queue:
+        _i = queue.index(picking_id)
+        if _i + 1 < len(queue):
+            nxt_id = queue[_i + 1]
+        st.caption(f"الطلب {_i + 1} من {len(queue)}")
+
     d = oc.get_picking_detail(uid, pwd, picking_id)
     if not d:
         st.error("غير موجود"); return
@@ -2300,15 +2319,37 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
         if st.button(btn_label, type="primary", use_container_width=True):
             ok, msg = oc.validate_picking(uid, pwd, picking_id)
             if ok:
-                st.success(msg); ss.op_pick_open = None; ss.op_pick_mode = None; st.rerun()
+                ss.op_just_validated = picking_id
+                st.rerun()
             else:
                 st.error(msg)
     else:
-        done_msg = {
-            "receive": "تم استلام هذا التحويل",
-            "return": "تم استلام هذا المرتجع",
-        }.get(mode, "تم تأكيد هذا الطلب مسبقاً")
-        st.info(done_msg)
+        if ss.get("op_just_validated") == picking_id:
+            st.success({
+                "receive": "✅ تم الاستلام بنجاح",
+                "return": "✅ تم استلام المرتجع بنجاح",
+            }.get(mode, "✅ تم تأكيد التسليم بنجاح"))
+        else:
+            done_msg = {
+                "receive": "تم استلام هذا التحويل",
+                "return": "تم استلام هذا المرتجع",
+            }.get(mode, "تم تأكيد هذا الطلب مسبقاً")
+            st.info(done_msg)
+
+    # After validation (or on an already-done order), jump to the next
+    # pending order from the same list — keeps the flow moving.
+    if d["state"] == "done" and nxt_id:
+        remaining = len(queue) - queue.index(picking_id) - 1
+        if st.button(f"الطلب التالي ← ({remaining} متبقٍ)", type="primary", use_container_width=True):
+            ss.op_pick_open = nxt_id
+            ss.pop("op_just_validated", None)
+            st.rerun()
+    elif d["state"] == "done" and queue and picking_id == queue[-1]:
+        st.info("🎉 هذا آخر طلب في القائمة")
+        if st.button("← العودة للقائمة", use_container_width=True):
+            ss.op_pick_open = None; ss.op_pick_mode = None
+            ss.pop("op_just_validated", None)
+            st.rerun()
 
 
 def _operations_screen_old():
