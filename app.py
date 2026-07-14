@@ -1562,9 +1562,56 @@ OPS_SORT = {
     "qty_desc":  "🧺 الأكثر منتجات",
 }
 
+OPS_PAGE_SIZE = 15  # orders per page in each Operations tab
+
+_OPS_CARD_CSS = """<style>
+.ops-card{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
+  border-radius:12px;padding:10px 12px;margin-bottom:7px;display:flex;
+  align-items:center;gap:10px}
+.ops-card .body{flex:1;min-width:0}
+.ops-line1{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:3px}
+.ops-chip{font-family:monospace;font-size:11px;padding:2px 8px;border-radius:6px;
+  white-space:nowrap}
+.ops-chip.ord{background:rgba(212,168,83,.12);color:#D4A853}
+.ops-chip.shp{background:rgba(127,176,105,.14);color:#7FB069}
+.ops-chip.rtn{background:rgba(224,112,112,.12);color:#E07070}
+.ops-track{font-size:11px;color:#7FB069;text-decoration:none;white-space:nowrap}
+.ops-name{font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.ops-meta{font-size:10.5px;opacity:.55;margin-top:1px}
+.ops-status{font-size:14px;white-space:nowrap}
+</style>"""
+
+
+def _ops_pager(key, total, sig):
+    """Render prev/next page controls and return the current 0-based page.
+    Resets to page 0 whenever the filter signature `sig` changes."""
+    pk = f"{key}_page"
+    sk = f"{key}_psig"
+    if ss.get(sk) != sig:
+        ss[pk] = 0; ss[sk] = sig
+    page = ss.get(pk, 0)
+    pages = max(1, -(-total // OPS_PAGE_SIZE))  # ceil
+    if page >= pages:
+        page = pages - 1; ss[pk] = page
+    if pages > 1:
+        c1, c2, c3 = st.columns([1, 1.4, 1])
+        # RTL: "next" (older index) on the left, "prev" on the right
+        if c1.button("التالي ←", key=f"{key}_next", disabled=page >= pages - 1,
+                     use_container_width=True):
+            ss[pk] = page + 1; st.rerun()
+        c2.markdown(
+            f"<div style='text-align:center;font-size:12px;opacity:.7;padding-top:7px'>"
+            f"صفحة {page + 1} من {pages}</div>", unsafe_allow_html=True)
+        if c3.button("→ السابق", key=f"{key}_prev", disabled=page <= 0,
+                     use_container_width=True):
+            ss[pk] = page - 1; st.rerun()
+    return page
+
 
 def operations_screen():
     uid, pwd = ss.uid, ss.pwd
+    st.markdown(_OPS_CARD_CSS, unsafe_allow_html=True)
 
     # Sub-page: picking detail with validate
     if ss.get("op_pick_open"):
@@ -1591,41 +1638,36 @@ def operations_screen():
         o1 = f1c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s1_o")
         q1 = f1c3.text_input(t("search"), key="op_s1_q", placeholder="رقم الطلب أو الشحنة")
         sig1 = f"{s1}|{q1}|{o1}"
-        if ss.get("op1_sig") != sig1:
-            ss.op1_limit = 200; ss.op1_sig = sig1
-        picks = oc.get_fg_to_yamamah(uid, pwd, s1, q1, limit=ss.get("op1_limit", 200), sort=o1)
-        p_total = getattr(picks, "total", len(picks)); p_shown = getattr(picks, "shown", len(picks))
-        st.caption(f"عرض {p_shown} من {p_total} طلب" if p_total > p_shown else f"{p_total} طلب")
+        cnt1 = oc.count_fg_to_yamamah(uid, pwd, s1, q1)
+        st.caption(f"{cnt1} طلب")
+        page1 = _ops_pager("op1", cnt1, sig1)
+        picks = oc.get_fg_to_yamamah(uid, pwd, s1, q1, limit=OPS_PAGE_SIZE, sort=o1,
+                                     offset=page1 * OPS_PAGE_SIZE)
+        if not picks:
+            st.info("لا توجد طلبات مطابقة")
         for p in picks:
-            st_ar = {"assigned":"🟡 جاهز","confirmed":"🟠 بانتظار","waiting":"⚪ ينتظر","done":"✅ تم"}.get(p["state"], p["state"])
-            # Shipment code + tracking link (LTR-isolated so the code reads right)
-            ship_line = ""
-            if p.get("shipment_code"):
-                track = (f"<a href='{p['tracking_url']}' target='_blank' style='color:#7FB069;text-decoration:none'>🔗 تتبّع</a>"
-                         if p.get("tracking_url") else "")
-                ship_line = (f"<div style='margin-top:5px;font-size:11px'>"
-                             f"<span dir='ltr' style='unicode-bidi:isolate;background:rgba(127,176,105,.12);"
-                             f"color:#7FB069;padding:2px 8px;border-radius:7px'>📦 {p['shipment_code']}</span>"
-                             f"<span style='margin-inline-start:8px'>{track}</span></div>")
-            card = (
-                "<div class='task-row' style='margin-bottom:4px'>"
-                "<div style='display:flex;justify-content:space-between;align-items:center'>"
-                f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{p['order']}</span>"
-                f"<span style='font-size:11px'>{st_ar}</span></div>"
-                f"<div style='font-weight:700;margin:7px 0 3px'>{p['customer']}</div>"
-                f"<div style='font-size:11px;opacity:.6'>{p['name']} · {p['date']} · 🧺 {p.get('qty', 0):g} منتج</div>"
-                f"{ship_line}"
-                "</div>"
-            )
-            st.markdown(card, unsafe_allow_html=True)
-            if st.button("عرض وتأكيد ←", key=f"op1_{p['id']}", use_container_width=True):
-                ss.op_pick_open = p["id"]; ss.op_pick_mode = "delivery"
-                ss.op_pick_queue = [x["id"] for x in picks if x["state"] != "done"]
-                st.rerun()
-            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
-        if p_total > p_shown:
-            if st.button(f"⬇️ تحميل المزيد ({p_total - p_shown} متبقٍ)", key="op1_more", use_container_width=True):
-                ss.op1_limit = ss.get("op1_limit", 200) + 200; st.rerun()
+            st_ic = {"assigned":"🟡","confirmed":"🟠","waiting":"⚪","done":"✅"}.get(p["state"], "•")
+            shp = (f"<span class='ops-chip shp'>📦 {p['shipment_code']}</span>"
+                   if p.get("shipment_code") else "")
+            trk = (f"<a class='ops-track' href='{p['tracking_url']}' target='_blank'>🔗 تتبّع</a>"
+                   if p.get("tracking_url") else "")
+            cc, cb = st.columns([6, 1])
+            with cc:
+                st.markdown(
+                    "<div class='ops-card'><div class='body'>"
+                    "<div class='ops-line1'>"
+                    f"<span class='ops-chip ord'>{p['order']}</span>{shp}{trk}"
+                    f"<span class='ops-status' style='margin-inline-start:auto'>{st_ic}</span>"
+                    "</div>"
+                    f"<div class='ops-name'>{p['customer']}</div>"
+                    f"<div class='ops-meta'>{p['date']} · 🧺 {p.get('qty', 0):g}</div>"
+                    "</div></div>", unsafe_allow_html=True)
+            with cb:
+                if st.button("←", key=f"op1_{p['id']}", use_container_width=True,
+                             help="عرض وتأكيد"):
+                    ss.op_pick_open = p["id"]; ss.op_pick_mode = "delivery"
+                    ss.op_pick_queue = [x["id"] for x in picks if x["state"] != "done"]
+                    st.rerun()
 
     # ── Stage 2: Yamamah → Customer (live API status) ──
     with tab2:
@@ -1640,28 +1682,29 @@ def operations_screen():
         o2 = f2c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s2_o")
         q2 = f2c3.text_input(t("search"), key="op_s2_q", placeholder="طلب، عميل، أو رقم شحنة")
         sig2 = f"{s2}|{q2}|{o2}"
-        if ss.get("op2_sig") != sig2:
-            ss.op2_limit = 200; ss.op2_sig = sig2
-        ships = oc.get_yamamah_to_customer(uid, pwd, s2, q2, limit=ss.get("op2_limit", 200), sort=o2)
-        s_total = getattr(ships, "total", len(ships)); s_shown = getattr(ships, "shown", len(ships))
-        st.caption(f"عرض {s_shown} من {s_total} شحنة" if s_total > s_shown else f"{s_total} شحنة")
+        cnt2 = oc.count_yamamah_to_customer(uid, pwd, s2, q2)
+        st.caption(f"{cnt2} شحنة")
+        page2 = _ops_pager("op2", cnt2, sig2)
+        ships = oc.get_yamamah_to_customer(uid, pwd, s2, q2, limit=OPS_PAGE_SIZE, sort=o2,
+                                           offset=page2 * OPS_PAGE_SIZE)
+        if not ships:
+            st.info("لا توجد شحنات مطابقة")
         for s in ships:
             meta = oc.YAMAMAH_STATUS.get(s["api_status"], {"color": "#9BA58F", "bg": "rgba(255,255,255,.07)"})
-            track = f"<a href='{s['tracking_url']}' target='_blank' style='color:#7FB069;font-size:11px'>🔗 {s['code']}</a>" if s["tracking_url"] else ""
+            shp = (f"<a class='ops-track' href='{s['tracking_url']}' target='_blank'>"
+                   f"📦 {s['code']}</a>" if s["tracking_url"] else
+                   (f"<span class='ops-chip shp'>📦 {s['code']}</span>" if s.get("code") else ""))
             cod = f" · COD {s['cod']:,.0f}" if s["cod"] else ""
-            card = (
-                "<div class='task-row' style='margin-bottom:4px'>"
-                "<div style='display:flex;justify-content:space-between;align-items:start'>"
-                f"<div><span style='font-family:monospace;font-size:11px;color:#D4A853'>{s['order']}</span><br>"
-                f"<b>{s['recipient']}</b><br>"
-                f"<span style='font-size:11px;opacity:.6'>{s['zone']} · {s['mobile']}{cod} · 🧺 {s.get('qty', 0):g} منتج</span></div>"
-                f"<span style='padding:3px 9px;border-radius:20px;font-size:10px;background:{meta['bg']};color:{meta['color']};white-space:nowrap'>{s['api_status']}</span>"
-                f"</div><div style='margin-top:5px'>{track}</div></div>"
-            )
-            st.markdown(card, unsafe_allow_html=True)
-        if s_total > s_shown:
-            if st.button(f"⬇️ تحميل المزيد ({s_total - s_shown} متبقٍ)", key="op2_more", use_container_width=True):
-                ss.op2_limit = ss.get("op2_limit", 200) + 200; st.rerun()
+            st.markdown(
+                "<div class='ops-card'><div class='body'>"
+                "<div class='ops-line1'>"
+                f"<span class='ops-chip ord'>{s['order']}</span>{shp}"
+                f"<span class='ops-chip' style='background:{meta['bg']};color:{meta['color']};"
+                f"margin-inline-start:auto'>{s['api_status']}</span>"
+                "</div>"
+                f"<div class='ops-name'>{s['recipient']}</div>"
+                f"<div class='ops-meta'>{s['zone']} · {s['mobile']}{cod} · 🧺 {s.get('qty', 0):g}</div>"
+                "</div></div>", unsafe_allow_html=True)
 
     # ── Stage 3: Receive FG transfers made at SJ by production ──
     with tab3:
@@ -1672,34 +1715,32 @@ def operations_screen():
         o3 = f3c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s3_o")
         q3 = f3c3.text_input(t("search"), key="op_s3_q", placeholder="رقم التحويل أو الطلب")
         sig3 = f"{s3}|{q3}|{o3}"
-        if ss.get("op3_sig") != sig3:
-            ss.op3_limit = 200; ss.op3_sig = sig3
-        trs = oc.get_sj_to_hd_transfers(uid, pwd, s3, q3, limit=ss.get("op3_limit", 200), sort=o3)
-        t_total = getattr(trs, "total", len(trs)); t_shown = getattr(trs, "shown", len(trs))
-        st.caption(f"عرض {t_shown} من {t_total} تحويل" if t_total > t_shown else f"{t_total} تحويل")
+        cnt3 = oc.count_sj_to_hd_transfers(uid, pwd, s3, q3)
+        st.caption(f"{cnt3} تحويل")
+        page3 = _ops_pager("op3", cnt3, sig3)
+        trs = oc.get_sj_to_hd_transfers(uid, pwd, s3, q3, limit=OPS_PAGE_SIZE, sort=o3,
+                                        offset=page3 * OPS_PAGE_SIZE)
         if not trs:
             st.info("لا توجد تحويلات مطابقة")
         for tr in trs:
-            st_ar = {"assigned": "🟡 جاهز للاستلام", "confirmed": "🟠 بانتظار",
-                     "waiting": "⚪ ينتظر", "done": "✅ تم الاستلام"}.get(tr["state"], tr["state"])
-            card = (
-                "<div class='task-row' style='margin-bottom:4px'>"
-                "<div style='display:flex;justify-content:space-between;align-items:center'>"
-                f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{tr['name']}</span>"
-                f"<span style='font-size:11px'>{st_ar}</span></div>"
-                f"<div style='font-size:12px;margin:6px 0 3px'>الطلب المصدر: {tr['order']}</div>"
-                f"<div style='font-size:11px;opacity:.6'>📅 {tr['date']} · 🧺 {tr.get('qty', 0):g} منتج</div>"
-                "</div>"
-            )
-            st.markdown(card, unsafe_allow_html=True)
-            if st.button("عرض واستلام ←", key=f"op3_{tr['id']}", use_container_width=True):
-                ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"
-                ss.op_pick_queue = [x["id"] for x in trs if x["state"] != "done"]
-                st.rerun()
-            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
-        if t_total > t_shown:
-            if st.button(f"⬇️ تحميل المزيد ({t_total - t_shown} متبقٍ)", key="op3_more", use_container_width=True):
-                ss.op3_limit = ss.get("op3_limit", 200) + 200; st.rerun()
+            st_ic = {"assigned":"🟡","confirmed":"🟠","waiting":"⚪","done":"✅"}.get(tr["state"], "•")
+            cc, cb = st.columns([6, 1])
+            with cc:
+                st.markdown(
+                    "<div class='ops-card'><div class='body'>"
+                    "<div class='ops-line1'>"
+                    f"<span class='ops-chip ord'>{tr['name']}</span>"
+                    f"<span class='ops-chip shp'>{tr['order']}</span>"
+                    f"<span class='ops-status' style='margin-inline-start:auto'>{st_ic}</span>"
+                    "</div>"
+                    f"<div class='ops-meta'>📅 {tr['date']} · 🧺 {tr.get('qty', 0):g}</div>"
+                    "</div></div>", unsafe_allow_html=True)
+            with cb:
+                if st.button("←", key=f"op3_{tr['id']}", use_container_width=True,
+                             help="عرض واستلام"):
+                    ss.op_pick_open = tr["id"]; ss.op_pick_mode = "receive"
+                    ss.op_pick_queue = [x["id"] for x in trs if x["state"] != "done"]
+                    st.rerun()
 
     # ── Tab 4: Validate returns coming back from Yamamah ──
     with tab4:
@@ -1710,34 +1751,32 @@ def operations_screen():
         o4 = f4c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s4_o")
         q4 = f4c3.text_input(t("search"), key="op_s4_q", placeholder="رقم المرتجع أو الطلب")
         sig4 = f"{s4}|{q4}|{o4}"
-        if ss.get("op4_sig") != sig4:
-            ss.op4_limit = 200; ss.op4_sig = sig4
-        rets = oc.get_yamamah_returns(uid, pwd, s4, q4, limit=ss.get("op4_limit", 200), sort=o4)
-        r_total = getattr(rets, "total", len(rets)); r_shown = getattr(rets, "shown", len(rets))
-        st.caption(f"عرض {r_shown} من {r_total} مرتجع" if r_total > r_shown else f"{r_total} مرتجع")
+        cnt4 = oc.count_yamamah_returns(uid, pwd, s4, q4)
+        st.caption(f"{cnt4} مرتجع")
+        page4 = _ops_pager("op4", cnt4, sig4)
+        rets = oc.get_yamamah_returns(uid, pwd, s4, q4, limit=OPS_PAGE_SIZE, sort=o4,
+                                      offset=page4 * OPS_PAGE_SIZE)
         if not rets:
             st.info("لا توجد مرتجعات مطابقة")
         for rt in rets:
-            st_ar = {"assigned": "🟡 جاهز للاستلام", "confirmed": "🟠 بانتظار",
-                     "waiting": "⚪ ينتظر", "done": "✅ تم الاستلام"}.get(rt["state"], rt["state"])
-            card = (
-                "<div class='task-row' style='margin-bottom:4px'>"
-                "<div style='display:flex;justify-content:space-between;align-items:center'>"
-                f"<span style='font-family:monospace;font-size:11px;background:rgba(224,112,112,.12);color:#E07070;padding:3px 9px;border-radius:7px'>{rt['name']}</span>"
-                f"<span style='font-size:11px'>{st_ar}</span></div>"
-                f"<div style='font-size:12px;margin:6px 0 3px'>{rt['origin']}</div>"
-                f"<div style='font-size:11px;opacity:.6'>📅 {rt['date']} · 🧺 {rt.get('qty', 0):g} منتج</div>"
-                "</div>"
-            )
-            st.markdown(card, unsafe_allow_html=True)
-            if st.button("عرض وتأكيد الاستلام ←", key=f"op4_{rt['id']}", use_container_width=True):
-                ss.op_pick_open = rt["id"]; ss.op_pick_mode = "return"
-                ss.op_pick_queue = [x["id"] for x in rets if x["state"] != "done"]
-                st.rerun()
-            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
-        if r_total > r_shown:
-            if st.button(f"⬇️ تحميل المزيد ({r_total - r_shown} متبقٍ)", key="op4_more", use_container_width=True):
-                ss.op4_limit = ss.get("op4_limit", 200) + 200; st.rerun()
+            st_ic = {"assigned":"🟡","confirmed":"🟠","waiting":"⚪","done":"✅"}.get(rt["state"], "•")
+            cc, cb = st.columns([6, 1])
+            with cc:
+                st.markdown(
+                    "<div class='ops-card'><div class='body'>"
+                    "<div class='ops-line1'>"
+                    f"<span class='ops-chip rtn'>{rt['name']}</span>"
+                    f"<span class='ops-chip ord'>{rt['origin']}</span>"
+                    f"<span class='ops-status' style='margin-inline-start:auto'>{st_ic}</span>"
+                    "</div>"
+                    f"<div class='ops-meta'>📅 {rt['date']} · 🧺 {rt.get('qty', 0):g}</div>"
+                    "</div></div>", unsafe_allow_html=True)
+            with cb:
+                if st.button("←", key=f"op4_{rt['id']}", use_container_width=True,
+                             help="عرض وتأكيد الاستلام"):
+                    ss.op_pick_open = rt["id"]; ss.op_pick_mode = "return"
+                    ss.op_pick_queue = [x["id"] for x in rets if x["state"] != "done"]
+                    st.rerun()
 
 
 def sales_screen():

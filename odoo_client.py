@@ -107,11 +107,11 @@ class PagedList(list):
     shown = 0
 
 
-def _paged(uid, pwd, model, domain, fields, limit, order):
+def _paged(uid, pwd, model, domain, fields, limit, order, offset=0):
     """search_count + search_read in one place, returning a PagedList."""
     total = odoo(uid, pwd, model, "search_count", [domain])
     recs = odoo(uid, pwd, model, "search_read", [domain],
-                {"fields": fields, "limit": limit, "order": order})
+                {"fields": fields, "limit": limit, "offset": offset, "order": order})
     return total, recs
 
 
@@ -1422,6 +1422,48 @@ def _pick_qty_map(uid, pwd, pick_ids):
         return {}
 
 
+def _ops_count(uid, pwd, ptype, state, query, extra_shipcode=False):
+    """search_count matching the same domain the list functions build,
+    so pager totals line up exactly."""
+    domain = [["picking_type_id", "=", ptype]]
+    if state == "ready":
+        domain.append(["state", "in", ["assigned", "confirmed", "waiting"]])
+    elif state != "all":
+        domain.append(["state", "=", state])
+    if query:
+        if extra_shipcode:
+            domain += ["|", "|", ["name", "ilike", query], ["origin", "ilike", query],
+                       ["accurate_shipment_code", "ilike", query]]
+        else:
+            domain += ["|", ["name", "ilike", query], ["origin", "ilike", query]]
+    return odoo(uid, pwd, "stock.picking", "search_count", [domain])
+
+
+def count_fg_to_yamamah(uid, pwd, state="ready", query=""):
+    return _ops_count(uid, pwd, 3, state, query, extra_shipcode=True)
+
+
+def count_sj_to_hd_transfers(uid, pwd, state="ready", query=""):
+    return _ops_count(uid, pwd, 57, state, query)
+
+
+def count_yamamah_returns(uid, pwd, state="ready", query=""):
+    return _ops_count(uid, pwd, 60, state, query)
+
+
+def count_yamamah_to_customer(uid, pwd, api_status="all", query=""):
+    domain = []
+    if api_status and api_status != "all":
+        if api_status == "none":
+            domain.append(["api_status_name", "=", False])
+        else:
+            domain.append(["api_status_name", "=", api_status])
+    if query:
+        domain += ["|", "|", "|", ["name", "ilike", query], ["code", "ilike", query],
+                   ["recipient_name", "ilike", query], ["sale_id.name", "ilike", query]]
+    return odoo(uid, pwd, "accurate.shipment", "search_count", [domain])
+
+
 def find_picking_by_query(uid, pwd, mode, query):
     """Jump-search inside the Operations detail view: find a picking of the
     same flow by order number, transfer name, or Accurate shipment code.
@@ -1437,7 +1479,7 @@ def find_picking_by_query(uid, pwd, mode, query):
         return None
     pending = [h for h in hits if h["state"] not in ("done", "cancel")]
     return (pending[0] if pending else hits[0])["id"]
-def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200, sort="date_asc"):
+def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200, sort="date_asc", offset=0):
     """Finished-goods transfers made at SJ by production, moving to HD.
     picking_type 57: SJ/FG-Storage -> HD/FG-Storage. Operations receives them.
     Default shows ready-to-receive (not done); 'all' includes received."""
@@ -1451,7 +1493,7 @@ def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200, sort="d
     total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
         {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
-         "limit": limit, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
+         "limit": limit, "offset": offset, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
     qmap = _pick_qty_map(uid, pwd, [p["id"] for p in picks])
     rows = [{
         "id": p["id"], "name": p["name"], "state": p["state"],
@@ -1467,7 +1509,7 @@ def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200, sort="d
     return out
 
 
-def get_yamamah_returns(uid, pwd, state="ready", query="", limit=200, sort="date_asc"):
+def get_yamamah_returns(uid, pwd, state="ready", query="", limit=200, sort="date_asc", offset=0):
     """Returns coming back from Yamamah/Alyamama into HD stock.
     picking_type 60: Alyamama WH -> HD/FG-Storage. Operations validates them
     to receive returned goods back into inventory.
@@ -1482,7 +1524,7 @@ def get_yamamah_returns(uid, pwd, state="ready", query="", limit=200, sort="date
     total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
         {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
-         "limit": limit, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
+         "limit": limit, "offset": offset, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
     qmap = _pick_qty_map(uid, pwd, [p["id"] for p in picks])
     rows = [{
         "id": p["id"], "name": p["name"], "state": p["state"],
@@ -1499,7 +1541,7 @@ def get_yamamah_returns(uid, pwd, state="ready", query="", limit=200, sort="date
     return out
 
 
-def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200, sort="date_asc"):
+def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200, sort="date_asc", offset=0):
     """Stage 1 pickings: FG → Alyamama warehouse. Default ready+waiting."""
     domain = [["picking_type_id", "=", 3]]
     if state == "ready":
@@ -1513,7 +1555,7 @@ def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200, sort="date_a
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
         {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id",
                     "accurate_shipment_code", "accurate_tracking_url"],
-         "limit": limit, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
+         "limit": limit, "offset": offset, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
     qmap = _pick_qty_map(uid, pwd, [p["id"] for p in picks])
     rows = [{
         "id": p["id"], "name": p["name"], "state": p["state"],
@@ -1603,7 +1645,7 @@ def get_picking_detail(uid, pwd, picking_id):
     }
 
 
-def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200, sort="date_asc"):
+def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200, sort="date_asc", offset=0):
     """Stage 2: shipments handed to Yamamah, tracked via Accurate API.
     Filters by the granular live API status (api_status_name).
     sort: date_asc (default) / date_desc server-side; qty_desc sorts the
@@ -1622,7 +1664,7 @@ def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200, sor
         {"fields": ["id", "name", "code", "state", "api_status_name", "tracking_url",
                     "sale_id", "recipient_name", "recipient_mobile", "recipient_zone_id",
                     "fee_collection", "date"],
-         "limit": limit, "order": order})
+         "limit": limit, "offset": offset, "order": order})
     total = odoo(uid, pwd, "accurate.shipment", "search_count", [domain])
     # Total product qty per linked sale order — one read_group call
     so_ids = list({s["sale_id"][0] for s in ships if s.get("sale_id")})
