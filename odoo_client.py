@@ -2607,3 +2607,5 @@ def submit_daily_report(uid, pwd, achievements, challenges, tomorrow):
     odoo(uid, pwd, "project.task", "message_post", [[task_id]],
         {"body": html, "message_type": "comment", "subtype_xmlid": "mail.mt_note"})
     return True
+
+# deploy sync: pagination helpers (b74f175)
