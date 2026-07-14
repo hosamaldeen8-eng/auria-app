@@ -1556,6 +1556,13 @@ def _procurement_screen_old():
                     oc.approve_rfq(uid, pwd, rfq["id"]); st.success("✓"); st.rerun()
 
 # ── OPERATIONS ───────────────────────────────────────────────
+OPS_SORT = {
+    "date_asc":  "⬆️ الأقدم أولاً",
+    "date_desc": "⬇️ الأحدث أولاً",
+    "qty_desc":  "🧺 الأكثر منتجات",
+}
+
+
 def operations_screen():
     uid, pwd = ss.uid, ss.pwd
 
@@ -1577,15 +1584,16 @@ def operations_screen():
 
     # ── Stage 1: FG → Yamamah (default ready+waiting, validate) ──
     with tab1:
-        st.caption("تجهيز الطلبات وتسليمها ليمامة — الأقدم أولاً")
+        st.caption("تجهيز الطلبات وتسليمها ليمامة")
         S1 = {"ready": "🟡 جاهز/بانتظار", "done": "✅ تم", "all": "الكل"}
-        f1c1, f1c2 = st.columns([2, 3])
+        f1c1, f1c2, f1c3 = st.columns([2, 2, 3])
         s1 = f1c1.selectbox("الحالة", list(S1.keys()), format_func=lambda k: S1[k], key="op_s1_f")
-        q1 = f1c2.text_input(t("search"), key="op_s1_q", placeholder="رقم الطلب")
-        sig1 = f"{s1}|{q1}"
+        o1 = f1c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s1_o")
+        q1 = f1c3.text_input(t("search"), key="op_s1_q", placeholder="رقم الطلب")
+        sig1 = f"{s1}|{q1}|{o1}"
         if ss.get("op1_sig") != sig1:
             ss.op1_limit = 200; ss.op1_sig = sig1
-        picks = oc.get_fg_to_yamamah(uid, pwd, s1, q1, limit=ss.get("op1_limit", 200))
+        picks = oc.get_fg_to_yamamah(uid, pwd, s1, q1, limit=ss.get("op1_limit", 200), sort=o1)
         p_total = getattr(picks, "total", len(picks)); p_shown = getattr(picks, "shown", len(picks))
         st.caption(f"عرض {p_shown} من {p_total} طلب" if p_total > p_shown else f"{p_total} طلب")
         for p in picks:
@@ -1605,7 +1613,7 @@ def operations_screen():
                 f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{p['order']}</span>"
                 f"<span style='font-size:11px'>{st_ar}</span></div>"
                 f"<div style='font-weight:700;margin:7px 0 3px'>{p['customer']}</div>"
-                f"<div style='font-size:11px;opacity:.6'>{p['name']} · {p['date']}</div>"
+                f"<div style='font-size:11px;opacity:.6'>{p['name']} · {p['date']} · 🧺 {p.get('qty', 0):g} منتج</div>"
                 f"{ship_line}"
                 "</div>"
             )
@@ -1619,19 +1627,20 @@ def operations_screen():
 
     # ── Stage 2: Yamamah → Customer (live API status) ──
     with tab2:
-        st.caption("الشحنات لدى يمامة — حالة API المباشرة، الأقدم أولاً")
+        st.caption("الشحنات لدى يمامة — حالة API المباشرة")
         # Granular live API status list (swapped from Sales)
         api_statuses = _cached_ship_api_statuses(uid, pwd)
         s2_opts = ["all"] + api_statuses + ["none"]
-        f2c1, f2c2 = st.columns([2, 3])
+        f2c1, f2c2, f2c3 = st.columns([2, 2, 3])
         s2 = f2c1.selectbox("الحالة", s2_opts,
             format_func=lambda k: "كل الشحنات" if k == "all" else ("بدون حالة" if k == "none" else k),
             key="op_s2_f")
-        q2 = f2c2.text_input(t("search"), key="op_s2_q", placeholder="طلب أو اسم العميل")
-        sig2 = f"{s2}|{q2}"
+        o2 = f2c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s2_o")
+        q2 = f2c3.text_input(t("search"), key="op_s2_q", placeholder="طلب أو اسم العميل")
+        sig2 = f"{s2}|{q2}|{o2}"
         if ss.get("op2_sig") != sig2:
             ss.op2_limit = 200; ss.op2_sig = sig2
-        ships = oc.get_yamamah_to_customer(uid, pwd, s2, q2, limit=ss.get("op2_limit", 200))
+        ships = oc.get_yamamah_to_customer(uid, pwd, s2, q2, limit=ss.get("op2_limit", 200), sort=o2)
         s_total = getattr(ships, "total", len(ships)); s_shown = getattr(ships, "shown", len(ships))
         st.caption(f"عرض {s_shown} من {s_total} شحنة" if s_total > s_shown else f"{s_total} شحنة")
         for s in ships:
@@ -1643,7 +1652,7 @@ def operations_screen():
                 "<div style='display:flex;justify-content:space-between;align-items:start'>"
                 f"<div><span style='font-family:monospace;font-size:11px;color:#D4A853'>{s['order']}</span><br>"
                 f"<b>{s['recipient']}</b><br>"
-                f"<span style='font-size:11px;opacity:.6'>{s['zone']} · {s['mobile']}{cod}</span></div>"
+                f"<span style='font-size:11px;opacity:.6'>{s['zone']} · {s['mobile']}{cod} · 🧺 {s.get('qty', 0):g} منتج</span></div>"
                 f"<span style='padding:3px 9px;border-radius:20px;font-size:10px;background:{meta['bg']};color:{meta['color']};white-space:nowrap'>{s['api_status']}</span>"
                 f"</div><div style='margin-top:5px'>{track}</div></div>"
             )
@@ -1654,15 +1663,16 @@ def operations_screen():
 
     # ── Stage 3: Receive FG transfers made at SJ by production ──
     with tab3:
-        st.caption("استلام تحويلات المنتج النهائي القادمة من مصنع SJ — الأقدم أولاً")
+        st.caption("استلام تحويلات المنتج النهائي القادمة من مصنع SJ")
         S3 = {"ready": "🟡 بانتظار الاستلام", "done": "✅ تم الاستلام", "all": "الكل"}
-        f3c1, f3c2 = st.columns([2, 3])
+        f3c1, f3c2, f3c3 = st.columns([2, 2, 3])
         s3 = f3c1.selectbox("الحالة", list(S3.keys()), format_func=lambda k: S3[k], key="op_s3_f")
-        q3 = f3c2.text_input(t("search"), key="op_s3_q", placeholder="رقم التحويل أو الطلب")
-        sig3 = f"{s3}|{q3}"
+        o3 = f3c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s3_o")
+        q3 = f3c3.text_input(t("search"), key="op_s3_q", placeholder="رقم التحويل أو الطلب")
+        sig3 = f"{s3}|{q3}|{o3}"
         if ss.get("op3_sig") != sig3:
             ss.op3_limit = 200; ss.op3_sig = sig3
-        trs = oc.get_sj_to_hd_transfers(uid, pwd, s3, q3, limit=ss.get("op3_limit", 200))
+        trs = oc.get_sj_to_hd_transfers(uid, pwd, s3, q3, limit=ss.get("op3_limit", 200), sort=o3)
         t_total = getattr(trs, "total", len(trs)); t_shown = getattr(trs, "shown", len(trs))
         st.caption(f"عرض {t_shown} من {t_total} تحويل" if t_total > t_shown else f"{t_total} تحويل")
         if not trs:
@@ -1676,7 +1686,7 @@ def operations_screen():
                 f"<span style='font-family:monospace;font-size:11px;background:rgba(212,168,83,.12);color:#D4A853;padding:3px 9px;border-radius:7px'>{tr['name']}</span>"
                 f"<span style='font-size:11px'>{st_ar}</span></div>"
                 f"<div style='font-size:12px;margin:6px 0 3px'>الطلب المصدر: {tr['order']}</div>"
-                f"<div style='font-size:11px;opacity:.6'>📅 {tr['date']}</div>"
+                f"<div style='font-size:11px;opacity:.6'>📅 {tr['date']} · 🧺 {tr.get('qty', 0):g} منتج</div>"
                 "</div>"
             )
             st.markdown(card, unsafe_allow_html=True)
@@ -1689,15 +1699,16 @@ def operations_screen():
 
     # ── Tab 4: Validate returns coming back from Yamamah ──
     with tab4:
-        st.caption("مرتجعات يمامة — استلام البضائع المرتجعة إلى المخزون، الأقدم أولاً")
+        st.caption("مرتجعات يمامة — استلام البضائع المرتجعة إلى المخزون")
         S4 = {"ready": "🟡 بانتظار التأكيد", "done": "✅ تم الاستلام", "all": "الكل"}
-        f4c1, f4c2 = st.columns([2, 3])
+        f4c1, f4c2, f4c3 = st.columns([2, 2, 3])
         s4 = f4c1.selectbox("الحالة", list(S4.keys()), format_func=lambda k: S4[k], key="op_s4_f")
-        q4 = f4c2.text_input(t("search"), key="op_s4_q", placeholder="رقم المرتجع أو الطلب")
-        sig4 = f"{s4}|{q4}"
+        o4 = f4c2.selectbox("الترتيب", list(OPS_SORT.keys()), format_func=lambda k: OPS_SORT[k], key="op_s4_o")
+        q4 = f4c3.text_input(t("search"), key="op_s4_q", placeholder="رقم المرتجع أو الطلب")
+        sig4 = f"{s4}|{q4}|{o4}"
         if ss.get("op4_sig") != sig4:
             ss.op4_limit = 200; ss.op4_sig = sig4
-        rets = oc.get_yamamah_returns(uid, pwd, s4, q4, limit=ss.get("op4_limit", 200))
+        rets = oc.get_yamamah_returns(uid, pwd, s4, q4, limit=ss.get("op4_limit", 200), sort=o4)
         r_total = getattr(rets, "total", len(rets)); r_shown = getattr(rets, "shown", len(rets))
         st.caption(f"عرض {r_shown} من {r_total} مرتجع" if r_total > r_shown else f"{r_total} مرتجع")
         if not rets:
@@ -1711,7 +1722,7 @@ def operations_screen():
                 f"<span style='font-family:monospace;font-size:11px;background:rgba(224,112,112,.12);color:#E07070;padding:3px 9px;border-radius:7px'>{rt['name']}</span>"
                 f"<span style='font-size:11px'>{st_ar}</span></div>"
                 f"<div style='font-size:12px;margin:6px 0 3px'>{rt['origin']}</div>"
-                f"<div style='font-size:11px;opacity:.6'>📅 {rt['date']}</div>"
+                f"<div style='font-size:11px;opacity:.6'>📅 {rt['date']} · 🧺 {rt.get('qty', 0):g} منتج</div>"
                 "</div>"
             )
             st.markdown(card, unsafe_allow_html=True)

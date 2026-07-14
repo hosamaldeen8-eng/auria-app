@@ -1399,7 +1399,28 @@ def confirm_payment(uid, pwd, bill_id):
 # ── OPERATIONS: two-stage delivery flow ──────────────────────
 # Stage 1: Pick From FG to Alyamama (type 3, internal) — ready/waiting to send
 # Stage 2: Delivery by Alyamam (type 41, outgoing) → Yamamah API tracks it
-def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200):
+
+# Sort options shared by all Operations lists.
+# date_* is applied server-side; qty_desc is applied client-side on the
+# loaded page (sum of product quantities per picking).
+_OPS_ORDER = {
+    "date_asc":  "scheduled_date asc, id asc",    # الأقدم أولاً
+    "date_desc": "scheduled_date desc, id desc",  # الأحدث أولاً
+}
+
+
+def _pick_qty_map(uid, pwd, pick_ids):
+    """Total demanded product qty per picking — one read_group call."""
+    if not pick_ids:
+        return {}
+    try:
+        groups = odoo(uid, pwd, "stock.move", "read_group",
+            [[["picking_id", "in", pick_ids]], ["product_uom_qty"], ["picking_id"]])
+        return {g["picking_id"][0]: g.get("product_uom_qty") or 0
+                for g in groups if g.get("picking_id")}
+    except Exception:
+        return {}
+def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200, sort="date_asc"):
     """Finished-goods transfers made at SJ by production, moving to HD.
     picking_type 57: SJ/FG-Storage -> HD/FG-Storage. Operations receives them.
     Default shows ready-to-receive (not done); 'all' includes received."""
@@ -1413,18 +1434,23 @@ def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200):
     total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
         {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
-         "limit": limit, "order": "scheduled_date asc"})  # oldest first
-    out = PagedList({
+         "limit": limit, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
+    qmap = _pick_qty_map(uid, pwd, [p["id"] for p in picks])
+    rows = [{
         "id": p["id"], "name": p["name"], "state": p["state"],
         "order": p.get("origin") or "—",
         "date": (p.get("scheduled_date") or "")[:10],
-    } for p in picks)
+        "qty": qmap.get(p["id"], 0),
+    } for p in picks]
+    if sort == "qty_desc":
+        rows.sort(key=lambda r: r["qty"], reverse=True)
+    out = PagedList(rows)
     out.total = total
     out.shown = len(picks)
     return out
 
 
-def get_yamamah_returns(uid, pwd, state="ready", query="", limit=200):
+def get_yamamah_returns(uid, pwd, state="ready", query="", limit=200, sort="date_asc"):
     """Returns coming back from Yamamah/Alyamama into HD stock.
     picking_type 60: Alyamama WH -> HD/FG-Storage. Operations validates them
     to receive returned goods back into inventory.
@@ -1439,19 +1465,24 @@ def get_yamamah_returns(uid, pwd, state="ready", query="", limit=200):
     total = odoo(uid, pwd, "stock.picking", "search_count", [domain])
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
         {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id"],
-         "limit": limit, "order": "scheduled_date asc"})  # oldest first
-    out = PagedList({
+         "limit": limit, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
+    qmap = _pick_qty_map(uid, pwd, [p["id"] for p in picks])
+    rows = [{
         "id": p["id"], "name": p["name"], "state": p["state"],
         "origin": p.get("origin") or "—",
         "customer": p["partner_id"][1] if p.get("partner_id") else "—",
         "date": (p.get("scheduled_date") or "")[:10],
-    } for p in picks)
+        "qty": qmap.get(p["id"], 0),
+    } for p in picks]
+    if sort == "qty_desc":
+        rows.sort(key=lambda r: r["qty"], reverse=True)
+    out = PagedList(rows)
     out.total = total
     out.shown = len(picks)
     return out
 
 
-def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200):
+def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200, sort="date_asc"):
     """Stage 1 pickings: FG → Alyamama warehouse. Default ready+waiting."""
     domain = [["picking_type_id", "=", 3]]
     if state == "ready":
@@ -1464,15 +1495,20 @@ def get_fg_to_yamamah(uid, pwd, state="ready", query="", limit=200):
     picks = odoo(uid, pwd, "stock.picking", "search_read", [domain],
         {"fields": ["id", "name", "state", "origin", "scheduled_date", "partner_id",
                     "accurate_shipment_code", "accurate_tracking_url"],
-         "limit": limit, "order": "scheduled_date asc"})  # oldest first
-    out = PagedList({
+         "limit": limit, "order": _OPS_ORDER.get(sort, _OPS_ORDER["date_asc"])})
+    qmap = _pick_qty_map(uid, pwd, [p["id"] for p in picks])
+    rows = [{
         "id": p["id"], "name": p["name"], "state": p["state"],
         "order": p.get("origin") or "—",
         "customer": p["partner_id"][1] if p.get("partner_id") else "—",
         "date": (p.get("scheduled_date") or "")[:10],
         "shipment_code": p.get("accurate_shipment_code") or "",
         "tracking_url": p.get("accurate_tracking_url") or "",
-    } for p in picks)
+        "qty": qmap.get(p["id"], 0),
+    } for p in picks]
+    if sort == "qty_desc":
+        rows.sort(key=lambda r: r["qty"], reverse=True)
+    out = PagedList(rows)
     out.total = total
     out.shown = len(picks)
     return out
@@ -1549,9 +1585,11 @@ def get_picking_detail(uid, pwd, picking_id):
     }
 
 
-def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200):
+def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200, sort="date_asc"):
     """Stage 2: shipments handed to Yamamah, tracked via Accurate API.
-    Oldest first. Filters by the granular live API status (api_status_name)."""
+    Filters by the granular live API status (api_status_name).
+    sort: date_asc (default) / date_desc server-side; qty_desc sorts the
+    loaded page by total product qty on the linked sale order."""
     domain = []
     if api_status and api_status != "all":
         if api_status == "none":
@@ -1561,13 +1599,26 @@ def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200):
     if query:
         domain += ["|", "|", ["name", "ilike", query],
                    ["recipient_name", "ilike", query], ["sale_id.name", "ilike", query]]
+    order = "date desc, id desc" if sort == "date_desc" else "date asc, id asc"
     ships = odoo(uid, pwd, "accurate.shipment", "search_read", [domain],
         {"fields": ["id", "name", "code", "state", "api_status_name", "tracking_url",
                     "sale_id", "recipient_name", "recipient_mobile", "recipient_zone_id",
                     "fee_collection", "date"],
-         "limit": limit, "order": "date asc"})  # oldest first
+         "limit": limit, "order": order})
     total = odoo(uid, pwd, "accurate.shipment", "search_count", [domain])
-    out = PagedList({
+    # Total product qty per linked sale order — one read_group call
+    so_ids = list({s["sale_id"][0] for s in ships if s.get("sale_id")})
+    qmap = {}
+    if so_ids:
+        try:
+            groups = odoo(uid, pwd, "sale.order.line", "read_group",
+                [[["order_id", "in", so_ids], ["display_type", "=", False]],
+                 ["product_uom_qty"], ["order_id"]])
+            qmap = {g["order_id"][0]: g.get("product_uom_qty") or 0
+                    for g in groups if g.get("order_id")}
+        except Exception:
+            qmap = {}
+    rows = [{
         "id": s["id"], "name": s["name"], "code": s.get("code", ""),
         "state": s["state"], "api_status": s.get("api_status_name") or "—",
         "tracking_url": s.get("tracking_url", ""),
@@ -1577,7 +1628,11 @@ def get_yamamah_to_customer(uid, pwd, api_status="all", query="", limit=200):
         "zone": s["recipient_zone_id"][1] if s.get("recipient_zone_id") else "—",
         "cod": s.get("fee_collection", 0),
         "date": (s.get("date") or "")[:16],
-    } for s in ships)
+        "qty": qmap.get(s["sale_id"][0], 0) if s.get("sale_id") else 0,
+    } for s in ships]
+    if sort == "qty_desc":
+        rows.sort(key=lambda r: r["qty"], reverse=True)
+    out = PagedList(rows)
     out.total = total
     out.shown = len(ships)
     return out
