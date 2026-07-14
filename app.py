@@ -2228,20 +2228,32 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
     """Picking detail. mode='delivery' (Yamamah handoff — shows customer
     contact) or mode='receive' (internal SJ→HD transfer — no contact,
     receive action)."""
-    if st.button("← رجوع"):
+    # Queue captured from the list at open time (respects the list's sort).
+    queue = ss.get("op_pick_queue") or []
+    prv_id = nxt_id = None
+    if picking_id in queue:
+        _i = queue.index(picking_id)
+        if _i > 0:
+            prv_id = queue[_i - 1]
+        if _i + 1 < len(queue):
+            nxt_id = queue[_i + 1]
+
+    # Top bar: back to list + navigate between orders without leaving detail
+    nav1, nav2, nav3 = st.columns([1.1, 1, 1])
+    if nav1.button("↩ القائمة", use_container_width=True):
         ss.op_pick_open = None; ss.op_pick_mode = None
         ss.pop("op_just_validated", None)
         st.rerun()
-
-    # Queue navigation: position of this picking among the pending orders
-    # captured from the list at open time (respects the list's sort order).
-    queue = ss.get("op_pick_queue") or []
-    nxt_id = None
+    if nav2.button("→ السابق", disabled=prv_id is None, use_container_width=True, key="op_nav_prev"):
+        ss.op_pick_open = prv_id
+        ss.pop("op_just_validated", None)
+        st.rerun()
+    if nav3.button("التالي ←", disabled=nxt_id is None, use_container_width=True, key="op_nav_next"):
+        ss.op_pick_open = nxt_id
+        ss.pop("op_just_validated", None)
+        st.rerun()
     if picking_id in queue:
-        _i = queue.index(picking_id)
-        if _i + 1 < len(queue):
-            nxt_id = queue[_i + 1]
-        st.caption(f"الطلب {_i + 1} من {len(queue)}")
+        st.caption(f"الطلب {queue.index(picking_id) + 1} من {len(queue)}")
 
     d = oc.get_picking_detail(uid, pwd, picking_id)
     if not d:
