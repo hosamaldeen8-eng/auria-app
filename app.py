@@ -2238,22 +2238,58 @@ def _op_picking_detail(uid, pwd, picking_id, mode="delivery"):
         if _i + 1 < len(queue):
             nxt_id = queue[_i + 1]
 
-    # Top bar: back to list + navigate between orders without leaving detail
-    nav1, nav2, nav3 = st.columns([1.1, 1, 1])
+    # Top bar: back to list + jump-search (order no. / shipment code)
+    nav1, nav2 = st.columns([1, 2.2])
     if nav1.button("↩ القائمة", use_container_width=True):
         ss.op_pick_open = None; ss.op_pick_mode = None
         ss.pop("op_just_validated", None)
+        ss.pop("op_detail_q_last", None)
         st.rerun()
-    if nav2.button("→ السابق", disabled=prv_id is None, use_container_width=True, key="op_nav_prev"):
-        ss.op_pick_open = prv_id
-        ss.pop("op_just_validated", None)
-        st.rerun()
-    if nav3.button("التالي ←", disabled=nxt_id is None, use_container_width=True, key="op_nav_next"):
-        ss.op_pick_open = nxt_id
-        ss.pop("op_just_validated", None)
-        st.rerun()
+    dq = nav2.text_input("بحث", key="op_detail_q", label_visibility="collapsed",
+                         placeholder="🔍 رقم الطلب أو الشحنة")
+    if dq and dq != ss.get("op_detail_q_last"):
+        ss.op_detail_q_last = dq
+        found = oc.find_picking_by_query(uid, pwd, mode, dq)
+        if found and found != picking_id:
+            ss.op_pick_open = found
+            ss.pop("op_just_validated", None)
+            st.rerun()
+        elif not found:
+            st.warning("لا يوجد طلب مطابق")
+
     if picking_id in queue:
         st.caption(f"الطلب {queue.index(picking_id) + 1} من {len(queue)}")
+
+    # Floating edge arrows — fixed at mid-height. RTL: next ← on the left
+    # edge, previous → on the right edge. Rendered only when a target exists.
+    st.markdown("""<style>
+      .st-key-op_nav_next, .st-key-op_nav_prev {
+        position: fixed; top: 52%; z-index: 999; width: 48px !important;
+      }
+      .st-key-op_nav_next { left: 6px; }
+      .st-key-op_nav_prev { right: 6px; }
+      .st-key-op_nav_next button, .st-key-op_nav_prev button {
+        width: 48px; height: 48px; border-radius: 50%; padding: 0;
+        font-size: 20px; font-weight: 700;
+        background: rgba(31,52,32,.94) !important;
+        border: 1px solid rgba(212,168,83,.45) !important;
+        color: #D4A853 !important;
+        box-shadow: 0 4px 16px rgba(0,0,0,.45);
+      }
+      .st-key-op_nav_next button:hover, .st-key-op_nav_prev button:hover {
+        border-color: #D4A853 !important;
+      }
+    </style>""", unsafe_allow_html=True)
+    if nxt_id:
+        if st.button("←", key="op_nav_next", help="الطلب التالي"):
+            ss.op_pick_open = nxt_id
+            ss.pop("op_just_validated", None)
+            st.rerun()
+    if prv_id:
+        if st.button("→", key="op_nav_prev", help="الطلب السابق"):
+            ss.op_pick_open = prv_id
+            ss.pop("op_just_validated", None)
+            st.rerun()
 
     d = oc.get_picking_detail(uid, pwd, picking_id)
     if not d:

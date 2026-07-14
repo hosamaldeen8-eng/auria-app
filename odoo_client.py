@@ -1420,6 +1420,23 @@ def _pick_qty_map(uid, pwd, pick_ids):
                 for g in groups if g.get("picking_id")}
     except Exception:
         return {}
+
+
+def find_picking_by_query(uid, pwd, mode, query):
+    """Jump-search inside the Operations detail view: find a picking of the
+    same flow by order number, transfer name, or Accurate shipment code.
+    Prefers a pending (not done/cancelled) match; falls back to any match.
+    Returns picking id or None."""
+    ptype = {"delivery": 3, "receive": 57, "return": 60}.get(mode, 3)
+    domain = [["picking_type_id", "=", ptype], "|", "|",
+              ["name", "ilike", query], ["origin", "ilike", query],
+              ["accurate_shipment_code", "ilike", query]]
+    hits = odoo(uid, pwd, "stock.picking", "search_read", [domain],
+        {"fields": ["id", "state"], "limit": 10, "order": "scheduled_date desc"})
+    if not hits:
+        return None
+    pending = [h for h in hits if h["state"] not in ("done", "cancel")]
+    return (pending[0] if pending else hits[0])["id"]
 def get_sj_to_hd_transfers(uid, pwd, state="ready", query="", limit=200, sort="date_asc"):
     """Finished-goods transfers made at SJ by production, moving to HD.
     picking_type 57: SJ/FG-Storage -> HD/FG-Storage. Operations receives them.
