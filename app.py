@@ -509,10 +509,33 @@ def clear_login_cookie():
     _raw_cookie_js("x", 0)
 
 
+# ── URL session token (cookie-independent persistence layer) ──
+# Streamlit Cloud may serve component iframes cross-origin, in which case
+# document.cookie writes land in the iframe's jar — visible to the component,
+# but never sent with app-page requests. This layer sidesteps cookies entirely:
+# the auth token rides in the URL (?s=...), which survives refresh by nature.
+def _sync_url_token(token):
+    try:
+        if st.query_params.get("s") != token:
+            st.query_params["s"] = token
+    except Exception:
+        pass
+
+
+def _clear_url_token():
+    try:
+        if "s" in st.query_params:
+            del st.query_params["s"]
+    except Exception:
+        pass
+
+
 # Top-level cookie maintenance (components can't render inside form-submit
 # branches, so writes always happen here on a clean run):
 if ss.uid and ss.get("email") and ss.get("pwd"):
     _now_screen = ss.get("screen", "home")
+    _token_now = base64.b64encode(f"{ss.email}|{ss.pwd}|{_now_screen}".encode()).decode()
+    _sync_url_token(_token_now)  # URL layer: always kept in sync, cookie-free
     _need_write = (ss.pop("_cookie_needs_save", False)
                    or ss.get("_cookie_screen_saved") != _now_screen)
     if _need_write:
@@ -537,10 +560,11 @@ if ss.uid and ss.get("email") and ss.get("pwd"):
 if ss.get("pending_cookie_clear"):
     ss.pop("pending_cookie_clear")
     clear_login_cookie()
+    _clear_url_token()
 
-# Auto-login: read the cookie from the HTTP request itself (st.context.cookies).
-# Available on the FIRST script run, before anything renders — unlike the
-# CookieManager component, which returns {} until a frontend round-trip.
+# Auto-login: two independent sources, tried in order —
+#   1) the HTTP request cookie (st.context.cookies, first-run available)
+#   2) the URL token (?s=...), which needs no cookies at all
 if not ss.uid and not ss.get("auto_login_tried"):
     ss.auto_login_tried = True
     raw = None
@@ -548,6 +572,11 @@ if not ss.uid and not ss.get("auto_login_tried"):
         raw = st.context.cookies.get(AUTH_COOKIE)
     except Exception:
         pass
+    if not raw:
+        try:
+            raw = st.query_params.get("s")
+        except Exception:
+            pass
     if raw:
         try:
             parts = base64.b64decode(raw.encode()).decode().split("|")
@@ -2934,15 +2963,21 @@ def profile_screen():
         except Exception:
             pass
         _vl = ss.get("_cookie_verify_left", 0)
+        _url_tok = None
+        try:
+            _url_tok = st.query_params.get("s")
+        except Exception:
+            pass
         st.write({
             "cookie in HTTP request (used for auto-login)": "✅ موجود" if _req else "❌ غير موجود",
             "cookie in browser now (live jar)": "✅ موجود" if _comp else "❌ غير موجود",
+            "URL session token (?s=)": "✅ موجود" if _url_tok else "❌ غير موجود",
             "writes attempted this session": ss.get("_cookie_write_n", 0),
             "verification": "✅ مؤكَّد" if _vl == 0 and ss.get("_cookie_write_n", 0) else f"⏳ جارٍ التحقق ({_vl})",
             "saved screen": ss.get("_cookie_screen_saved"),
         })
-        if not _req and not _comp:
-            st.warning("لا يوجد كوكي محفوظ — لهذا يطلب تسجيل الدخول عند التحديث.")
+        if not _req and not _url_tok:
+            st.warning("لا كوكي في الطلب ولا رمز في الرابط — التحديث سيطلب تسجيل الدخول.")
         if st.button("🔄 إعادة حفظ الكوكي الآن", key="diag_resave"):
             write_login_cookie(ss.email, ss.pwd, ss.get("screen", "home"))
             ss["_cookie_verify_left"] = 3
