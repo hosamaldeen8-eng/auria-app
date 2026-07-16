@@ -452,71 +452,100 @@ def _rear_camera(key, label="📸 صوّر الإيصال"):
     photo = st.camera_input(label, key=key, label_visibility="collapsed")
     return photo.getvalue() if photo else None
 
-# ── PERSISTENT LOGIN (real cookie component) ────────────────
-# The previous approach wrote cookies via a components.html <script> that did
-# parent.document.cookie — but that iframe is sandboxed/cross-origin, so the
-# browser silently BLOCKED the write. The cookie was never actually saved,
-# which is why sessions never persisted. extra-streamlit-components provides a
-# real bidirectional component that can genuinely read AND write cookies.
-# CookieManager is a widget component, so it must NOT be wrapped in
-# @st.cache_resource (Streamlit forbids widget calls inside cached functions).
-# Instantiate it once per session via session_state instead.
+# ── PERSISTENT LOGIN (reliable, self-verifying) ─────────────
+# Architecture (each layer independent, any one is enough):
+#   READ   → st.context.cookies: the HTTP request cookies, available on the
+#            very first script run. No component, no flash, no race.
+#   WRITE  → TWO writers fire together:
+#            1) stx.CookieManager component (proven library path)
+#            2) a raw components.html <script> that sets document.cookie —
+#               components.html iframes DO execute scripts (unlike st.markdown,
+#               whose injected <script> never runs — the cause of the original
+#               "silently blocked" write) and are same-origin on Streamlit
+#               Cloud, so the cookie lands on the app domain.
+#   VERIFY → after any write, the next few runs check the live browser jar via
+#            the CookieManager component; if the cookie didn't stick, rewrite
+#            (up to 3 attempts). Failures can no longer be silent.
 cookies = stx.CookieManager(key="auria_cookies")
 
-def save_login_cookie(email, pwd, screen="home"):
-    """Persist the session for 30 days (email|pwd|screen).
+AUTH_COOKIE = "auria_auth"
+AUTH_DAYS = 30
 
-    Two things matter here:
-    1. A UNIQUE component key per write. Streamlit components with a fixed key
-       execute once and then replay a cached result — so a constant key meant
-       the cookie-setting JS often never ran again. The counter forces a fresh
-       component instance each time.
-    2. same_site='lax'. The component defaults to 'strict', which stops the
-       browser sending the cookie on some navigations — and we READ it from the
-       HTTP request cookies, which requires it to be sent.
-    """
+
+def _raw_cookie_js(value, max_age):
+    """Render a zero-height component whose script writes the cookie directly.
+    Writes on both the iframe document and the parent document — same-origin,
+    so both target the app domain; whichever executes first wins."""
+    c = f"{AUTH_COOKIE}={value}; path=/; max-age={max_age}; SameSite=Lax; Secure"
+    components.html(
+        f"<script>try{{document.cookie={c!r};}}catch(e){{}}"
+        f"try{{parent.document.cookie={c!r};}}catch(e){{}}</script>",
+        height=0)
+
+
+def write_login_cookie(email, pwd, screen="home"):
+    """Persist the session for 30 days (email|pwd|screen) via both writers."""
     token = base64.b64encode(f"{email}|{pwd}|{screen}".encode()).decode()
     n = ss.get("_cookie_write_n", 0) + 1
     ss["_cookie_write_n"] = n
-    cookies.set("auria_auth", token,
-                expires_at=datetime.now() + timedelta(days=30),
-                same_site="lax", path="/",
-                key=f"set_auria_auth_{n}")
-
-def clear_login_cookie():
     try:
-        cookies.delete("auria_auth", key="del_auria_auth")
+        # Unique key per write: a fixed key would replay the cached component
+        # and the set-JS would never run again.
+        cookies.set(AUTH_COOKIE, token,
+                    expires_at=datetime.now() + timedelta(days=AUTH_DAYS),
+                    same_site="lax", path="/",
+                    key=f"ck_set_{n}")
     except Exception:
         pass
+    _raw_cookie_js(token, AUTH_DAYS * 86400)
 
-# Save/refresh the cookie at TOP LEVEL (never inside a form/submit branch —
-# cookies.set() renders a component and won't execute there). Fires right after
-# login (_cookie_needs_save) and whenever the screen changes, so a refresh
-# restores both the session and the page you were on.
+
+def clear_login_cookie():
+    """Delete via both paths: component delete + raw max-age=0 overwrite."""
+    try:
+        cookies.delete(AUTH_COOKIE, key=f"ck_del_{ss.get('_cookie_write_n', 0)}")
+    except Exception:
+        pass
+    _raw_cookie_js("x", 0)
+
+
+# Top-level cookie maintenance (components can't render inside form-submit
+# branches, so writes always happen here on a clean run):
 if ss.uid and ss.get("email") and ss.get("pwd"):
     _now_screen = ss.get("screen", "home")
-    if ss.pop("_cookie_needs_save", False) or ss.get("_cookie_screen_saved") != _now_screen:
+    _need_write = (ss.pop("_cookie_needs_save", False)
+                   or ss.get("_cookie_screen_saved") != _now_screen)
+    if _need_write:
         ss["_cookie_screen_saved"] = _now_screen
+        write_login_cookie(ss.email, ss.pwd, _now_screen)
+        ss["_cookie_verify_left"] = 3  # arm the verification loop
+    elif ss.get("_cookie_verify_left", 0) > 0:
+        # A later run: the manager component has round-tripped by now, so its
+        # jar reflects the real browser state. If our cookie isn't there, the
+        # write was lost (unmount race / mobile quirk) — write again.
+        _live = None
         try:
-            save_login_cookie(ss.email, ss.pwd, _now_screen)
+            _live = cookies.get(AUTH_COOKIE)
         except Exception:
             pass
+        if _live:
+            ss["_cookie_verify_left"] = 0  # confirmed persisted
+        else:
+            ss["_cookie_verify_left"] -= 1
+            write_login_cookie(ss.email, ss.pwd, _now_screen)
 
 if ss.get("pending_cookie_clear"):
     ss.pop("pending_cookie_clear")
     clear_login_cookie()
 
 # Auto-login: read the cookie from the HTTP request itself (st.context.cookies).
-# This is available on the FIRST script run, before anything renders — unlike
-# the CookieManager component, which returns {} on its first run by design
-# (components only return real data after a frontend round-trip). Waiting for
-# the component was the cause of the login-page flash; reading the request
-# cookie directly removes it entirely.
+# Available on the FIRST script run, before anything renders — unlike the
+# CookieManager component, which returns {} until a frontend round-trip.
 if not ss.uid and not ss.get("auto_login_tried"):
     ss.auto_login_tried = True
     raw = None
     try:
-        raw = st.context.cookies.get("auria_auth")
+        raw = st.context.cookies.get(AUTH_COOKIE)
     except Exception:
         pass
     if raw:
@@ -2896,25 +2925,28 @@ def profile_screen():
     with st.expander("🔧 حالة الجلسة (تشخيص)"):
         _req = None
         try:
-            _req = st.context.cookies.get("auria_auth")
+            _req = st.context.cookies.get(AUTH_COOKIE)
         except Exception as ex:
             st.caption(f"request-cookie read error: {ex}")
         _comp = None
         try:
-            _comp = cookies.get("auria_auth")
+            _comp = cookies.get(AUTH_COOKIE)
         except Exception:
             pass
+        _vl = ss.get("_cookie_verify_left", 0)
         st.write({
             "cookie in HTTP request (used for auto-login)": "✅ موجود" if _req else "❌ غير موجود",
-            "cookie via component": "✅ موجود" if _comp else "❌ غير موجود",
+            "cookie in browser now (live jar)": "✅ موجود" if _comp else "❌ غير موجود",
             "writes attempted this session": ss.get("_cookie_write_n", 0),
+            "verification": "✅ مؤكَّد" if _vl == 0 and ss.get("_cookie_write_n", 0) else f"⏳ جارٍ التحقق ({_vl})",
             "saved screen": ss.get("_cookie_screen_saved"),
         })
         if not _req and not _comp:
             st.warning("لا يوجد كوكي محفوظ — لهذا يطلب تسجيل الدخول عند التحديث.")
         if st.button("🔄 إعادة حفظ الكوكي الآن", key="diag_resave"):
-            save_login_cookie(ss.email, ss.pwd, ss.get("screen", "home"))
-            st.success("تم إرسال أمر الحفظ — حدّث الصفحة ثم افتح هذا القسم مجدداً")
+            write_login_cookie(ss.email, ss.pwd, ss.get("screen", "home"))
+            ss["_cookie_verify_left"] = 3
+            st.success("تم إرسال أمر الحفظ عبر المسارين — حدّث الصفحة للتأكد")
 
     st.markdown(f"""<div class='greeting' style='text-align:center;padding:26px 18px'>
         <img src='data:image/png;base64,{EMBLEM_B64}' width='72' style='border-radius:50%;margin-bottom:10px'/>
