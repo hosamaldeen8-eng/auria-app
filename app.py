@@ -472,6 +472,26 @@ AUTH_COOKIE = "auria_auth"
 AUTH_DAYS = 30
 
 
+def _make_token(email, pwd, screen):
+    """URL-safe base64: standard b64 can contain '+', which query-string
+    parsing decodes to a SPACE — corrupting the token on refresh. urlsafe
+    ('-','_') survives cookies and URLs identically."""
+    return base64.urlsafe_b64encode(f"{email}|{pwd}|{screen}".encode()).decode()
+
+
+def _read_token(raw):
+    """Decode a token; tolerate old standard-b64 cookies and '+'→space damage."""
+    for candidate in (raw, raw.replace(" ", "+")):
+        for dec in (base64.urlsafe_b64decode, base64.b64decode):
+            try:
+                parts = dec(candidate.encode()).decode().split("|")
+                if len(parts) >= 2:
+                    return parts
+            except Exception:
+                continue
+    return None
+
+
 def _raw_cookie_js(value, max_age):
     """Render a zero-height component whose script writes the cookie directly.
     Writes on both the iframe document and the parent document — same-origin,
@@ -485,7 +505,7 @@ def _raw_cookie_js(value, max_age):
 
 def write_login_cookie(email, pwd, screen="home"):
     """Persist the session for 30 days (email|pwd|screen) via both writers."""
-    token = base64.b64encode(f"{email}|{pwd}|{screen}".encode()).decode()
+    token = _make_token(email, pwd, screen)
     n = ss.get("_cookie_write_n", 0) + 1
     ss["_cookie_write_n"] = n
     try:
@@ -534,7 +554,7 @@ def _clear_url_token():
 # branches, so writes always happen here on a clean run):
 if ss.uid and ss.get("email") and ss.get("pwd"):
     _now_screen = ss.get("screen", "home")
-    _token_now = base64.b64encode(f"{ss.email}|{ss.pwd}|{_now_screen}".encode()).decode()
+    _token_now = _make_token(ss.email, ss.pwd, _now_screen)
     _sync_url_token(_token_now)  # URL layer: always kept in sync, cookie-free
     _need_write = (ss.pop("_cookie_needs_save", False)
                    or ss.get("_cookie_screen_saved") != _now_screen)
@@ -562,35 +582,64 @@ if ss.get("pending_cookie_clear"):
     clear_login_cookie()
     _clear_url_token()
 
-# Auto-login: two independent sources, tried in order —
+# Auto-login: three independent sources, tried in order —
 #   1) the HTTP request cookie (st.context.cookies, first-run available)
 #   2) the URL token (?s=...), which needs no cookies at all
-if not ss.uid and not ss.get("auto_login_tried"):
-    ss.auto_login_tried = True
-    raw = None
+#   3) the component jar (cookies.get) — works even if the component iframe is
+#      cross-origin, since the same iframe both wrote and reads that jar. It
+#      returns nothing until a frontend round-trip, so we poll briefly.
+def _try_token_login(raw):
+    parts = _read_token(raw)
+    if not parts:
+        return False
+    email, pwd = parts[0], parts[1]
+    saved_screen = parts[2] if len(parts) > 2 else "home"
     try:
-        raw = st.context.cookies.get(AUTH_COOKIE)
+        uid, info = oc.authenticate(email, pwd)
+    except Exception:
+        return False
+    if not uid:
+        return False
+    ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email
+    ss.screen = saved_screen  # land back on the same page
+    ss["_cookie_screen_saved"] = saved_screen
+    try:
+        oc.touch_session(uid, pwd)
     except Exception:
         pass
-    if not raw:
+    st.rerun()
+
+
+if not ss.uid and not ss.get("auto_login_tried"):
+    ss.auto_login_tried = True
+    for _src in (lambda: st.context.cookies.get(AUTH_COOKIE),
+                 lambda: st.query_params.get("s")):
         try:
-            raw = st.query_params.get("s")
+            _raw = _src()
         except Exception:
-            pass
-    if raw:
-        try:
-            parts = base64.b64decode(raw.encode()).decode().split("|")
-            email, pwd = parts[0], parts[1]
-            saved_screen = parts[2] if len(parts) > 2 else "home"
-            uid, info = oc.authenticate(email, pwd)
-            if uid:
-                ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email
-                ss.screen = saved_screen  # land back on the same page
-                ss["_cookie_screen_saved"] = saved_screen
-                oc.touch_session(uid, pwd)
-                st.rerun()
-        except Exception:
-            pass
+            _raw = None
+        if _raw:
+            _try_token_login(_raw)  # reruns on success
+    # Instant sources failed → arm the component-jar restore window
+    ss["_restore_tries"] = 6
+
+if not ss.uid and ss.get("_restore_tries", 0) > 0:
+    _jar = None
+    try:
+        _jar = cookies.get(AUTH_COOKIE)
+    except Exception:
+        pass
+    if _jar:
+        ss["_restore_tries"] = 0
+        _try_token_login(_jar)  # reruns on success
+    else:
+        ss["_restore_tries"] -= 1
+        if ss["_restore_tries"] > 0:
+            # Give the cookie component time to round-trip before concluding
+            # there's no session (~0.35s per attempt, ≤2s total).
+            with st.spinner("جارٍ استعادة الجلسة..."):
+                time.sleep(0.35)
+            st.rerun()
 
 # ── LOGIN ────────────────────────────────────────────────────
 def login_screen():
@@ -3012,6 +3061,7 @@ def profile_screen():
         for k in ["uid","pwd","info","email","cs_open","mo_open","auto_login_tried"]:
             ss.pop(k, None)
         ss.auto_login_tried = True  # don't instantly re-login from cookie
+        ss["_restore_tries"] = 0    # nor from the component jar (clear is async)
         ss.screen = "home"  # reset so no stale screen state lingers into login
         st.rerun()
 
