@@ -550,6 +550,32 @@ def _clear_url_token():
         pass
 
 
+def _real_url():
+    """The page URL the browser ACTUALLY loaded (st.context.url) — unlike
+    st.query_params, this can't be polluted by our own in-session writes."""
+    try:
+        return st.context.url or ""
+    except Exception:
+        return ""
+
+
+def _ensure_url_token_hard(token):
+    """Guarantee the token is in the address bar. st.query_params writes have
+    proven unreliable on this deployment (state says set, address bar stays
+    bare, refresh logs out). A meta-refresh is a REAL navigation: after it,
+    the address bar carries ?s=... by definition, and refresh keeps it."""
+    real = _real_url()
+    qs = real.split("?", 1)[1] if "?" in real else ""
+    if "s=" in qs:
+        return  # a token is already physically in the URL
+    if ss.get("_url_redirected"):
+        return  # one redirect per session, never loop
+    ss["_url_redirected"] = True
+    st.markdown(f'<meta http-equiv="refresh" content="0;url=?s={token}">',
+                unsafe_allow_html=True)
+    st.stop()
+
+
 # Top-level cookie maintenance (components can't render inside form-submit
 # branches, so writes always happen here on a clean run):
 if ss.uid and ss.get("email") and ss.get("pwd"):
@@ -562,6 +588,7 @@ if ss.uid and ss.get("email") and ss.get("pwd"):
         ss["_cookie_screen_saved"] = _now_screen
         write_login_cookie(ss.email, ss.pwd, _now_screen)
         ss["_cookie_verify_left"] = 3  # arm the verification loop
+        _ensure_url_token_hard(_token_now)  # force ?s= into the real URL
     elif ss.get("_cookie_verify_left", 0) > 0:
         # A later run: the manager component has round-tripped by now, so its
         # jar reflects the real browser state. If our cookie isn't there, the
@@ -581,6 +608,13 @@ if ss.get("pending_cookie_clear"):
     ss.pop("pending_cookie_clear")
     clear_login_cookie()
     _clear_url_token()
+    # The token may still be in the ADDRESS BAR (soft query-param deletes are
+    # as unreliable as soft writes) — hard-navigate to the bare URL so a
+    # refresh after logout cannot re-login.
+    if "s=" in (_real_url().split("?", 1)[1] if "?" in _real_url() else ""):
+        st.markdown('<meta http-equiv="refresh" content="0;url=.">',
+                    unsafe_allow_html=True)
+        st.stop()
 
 # Auto-login: three independent sources, tried in order —
 #   1) the HTTP request cookie (st.context.cookies, first-run available)
@@ -602,7 +636,10 @@ def _try_token_login(raw):
         return False
     ss.uid, ss.pwd, ss.info, ss.email = uid, pwd, info, email
     ss.screen = saved_screen  # land back on the same page
-    ss["_cookie_screen_saved"] = saved_screen
+    # NOTE: deliberately NOT setting _cookie_screen_saved here — the next run
+    # must enter the save path, which re-writes the cookie AND hard-plants the
+    # token in the address bar (crucial after a jar-restore, where the URL is
+    # still bare and the next refresh would otherwise depend on the jar again).
     try:
         oc.touch_session(uid, pwd)
     except Exception:
@@ -3017,16 +3054,19 @@ def profile_screen():
             _url_tok = st.query_params.get("s")
         except Exception:
             pass
+        _real = _real_url()
+        _real_has = "s=" in (_real.split("?", 1)[1] if "?" in _real else "")
         st.write({
             "cookie in HTTP request (used for auto-login)": "✅ موجود" if _req else "❌ غير موجود",
             "cookie in browser now (live jar)": "✅ موجود" if _comp else "❌ غير موجود",
-            "URL session token (?s=)": "✅ موجود" if _url_tok else "❌ غير موجود",
+            "URL session token (state)": "✅ موجود" if _url_tok else "❌ غير موجود",
+            "token in REAL address bar (يبقى بعد التحديث)": "✅ موجود" if _real_has else "❌ غير موجود",
             "writes attempted this session": ss.get("_cookie_write_n", 0),
             "verification": "✅ مؤكَّد" if _vl == 0 and ss.get("_cookie_write_n", 0) else f"⏳ جارٍ التحقق ({_vl})",
             "saved screen": ss.get("_cookie_screen_saved"),
         })
-        if not _req and not _url_tok:
-            st.warning("لا كوكي في الطلب ولا رمز في الرابط — التحديث سيطلب تسجيل الدخول.")
+        if not _real_has:
+            st.warning("الرمز ليس في شريط العنوان فعلياً — التحديث سيفقد الجلسة.")
         if st.button("🔄 إعادة حفظ الكوكي الآن", key="diag_resave"):
             write_login_cookie(ss.email, ss.pwd, ss.get("screen", "home"))
             ss["_cookie_verify_left"] = 3
